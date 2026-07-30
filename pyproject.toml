@@ -1,16 +1,16 @@
 [build-system]
 requires = ["setuptools>=68.0"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "taskflow-agent"
 version = "0.1.0"
 description = "Autonomous AI agent for day-to-day task automation"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
-    {name = "TaskFlow Team"}
+    {name = "Puneet Divedi", email = "sd9501242@gmail.com"}
 ]
 dependencies = [
     "anthropic>=0.70.0",
@@ -46,3 +46,4 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+asyncio_mode = "auto"

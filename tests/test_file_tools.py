@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -14,6 +15,12 @@ from src.tools.file_tools import (
     ReadFileTool,
     SearchFilesTool,
     WriteFileTool,
+)
+
+# --- helpers ---
+_has_rg = shutil.which("rg") is not None
+skip_if_no_rg = pytest.mark.skipif(
+    not _has_rg, reason="ripgrep (rg) not installed — SearchFilesTool tests skipped"
 )
 
 
@@ -82,6 +89,7 @@ class TestListFilesTool:
 # SearchFilesTool
 # ---------------------------------------------------------------------------
 class TestSearchFilesTool:
+    @skip_if_no_rg
     async def test_finds_pattern(self, temp_dir: Path) -> None:
         (temp_dir / "notes.txt").write_text("apple banana cherry")
         tool = SearchFilesTool()
@@ -89,6 +97,7 @@ class TestSearchFilesTool:
         assert "1 match" in result
         assert "notes.txt" in result
 
+    @skip_if_no_rg
     async def test_no_match(self, temp_dir: Path) -> None:
         (temp_dir / "notes.txt").write_text("apple")
         tool = SearchFilesTool()

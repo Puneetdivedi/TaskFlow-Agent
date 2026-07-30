@@ -26,6 +26,19 @@ class TestToolRegistry:
         assert "run_shell" in names
         assert "move_file" in names
         assert "delete_file" in names
+        assert "file_index" in names
+
+    def test_registry_safety_level_passed(self) -> None:
+        registry = ToolRegistry(safety_level=0)
+        with pytest.raises(ToolError, match="blocked at safety level 0"):
+            import asyncio
+            asyncio.run(registry.dispatch("run_shell", {"command": "echo hello"}))
+
+    def test_registry_default_safety_allows_shell(self) -> None:
+        """Safety level 1 (default) should allow shell commands."""
+        import asyncio
+        result = asyncio.run(ToolRegistry().dispatch("run_shell", {"command": "echo hello"}))
+        assert "hello" in result
 
     def test_anthropic_defs_are_valid(self) -> None:
         registry = ToolRegistry()

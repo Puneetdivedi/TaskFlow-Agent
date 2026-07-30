@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from src.agent.claude_client import ClaudeClient
+from src.agent.claude_client import ClaudeClient, ClaudeClientError
 from src.memory.conversation import ConversationMemory
 from src.tools.base import ToolError
 from src.tools.registry import ToolRegistry
@@ -45,10 +45,11 @@ class AgentOrchestrator:
         model: str = "claude-sonnet-5-20250611",
         system_prompt: str | None = None,
         work_dir: Path | None = None,
+        safety_level: int = 1,
         max_tool_calls: int = 25,
     ) -> None:
         self._client = ClaudeClient(api_key=api_key, model=model)
-        self._tools = ToolRegistry(work_dir=work_dir)
+        self._tools = ToolRegistry(work_dir=work_dir, safety_level=safety_level)
         self._memory = ConversationMemory()
         self._system_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
         self._max_tool_calls = max_tool_calls
@@ -73,64 +74,60 @@ class AgentOrchestrator:
         tool_call_count = 0
 
         while True:
-            response = self._client.send_messages(
-                messages=self._memory.messages,
-                system=self._system_prompt,
-                tools=self._tools.anthropic_tool_defs(),
-            )
+            try:
+                response = self._client.send_messages(
+                    messages=self._memory.messages,
+                    system=self._system_prompt,
+                    tools=self._tools.anthropic_tool_defs(),
+                )
+            except ClaudeClientError as exc:
+                error_text = f"API error: {exc}"
+                self._memory.add_assistant(error_text)
+                return error_text
 
-            # --- Process each content block ---
+            # --- Build a single assistant response from all content blocks ---
+            assistant_content: list[dict] = []
+            tool_blocks: list[Any] = []
+
             for block in response.content:
                 if block.type == "text":
-                    # Claude is speaking — we save it and continue
-                    # (the loop may still have tool_use blocks to process)
-                    continue
-
-                if block.type == "tool_use":
-                    tool_call_count += 1
-                    if tool_call_count > self._max_tool_calls:
-                        error_msg = (
-                            f"Exceeded max tool calls ({self._max_tool_calls}). "
-                            "Aborting to prevent runaway execution."
-                        )
-                        self._memory.add_assistant(
-                            [
-                                {"type": "text", "text": error_msg},
-                                block,  # include the tool_use for consistency
-                            ]
-                        )
-                        self._memory.add_tool_result(
-                            block.id, error_msg
-                        )
-                        return error_msg
-
-                    # Execute the tool
-                    try:
-                        result = await self._tools.dispatch(
-                            block.name, block.input
-                        )
-                    except ToolError as exc:
-                        result = f"Error: {exc}"
-
-                    # Append assistant block + tool result to memory
-                    self._memory.add_assistant(
-                        [{"type": "text", "text": ""}, block]
+                    assistant_content.append({"type": "text", "text": block.text})
+                elif block.type == "tool_use":
+                    tool_blocks.append(block)
+                    assistant_content.append(
+                        {"type": "tool_use", "id": block.id, "name": block.name, "input": block.input}
                     )
-                    self._memory.add_tool_result(block.id, result)
+
+            # Preserve empty assistant entries so the message alternation
+            # (user → assistant → (tool_result) → assistant → …) stays valid.
+            if assistant_content or tool_blocks:
+                self._memory.add_assistant(assistant_content if assistant_content else "")
+
+            # --- Execute each tool call ---
+            for block in tool_blocks:
+                tool_call_count += 1
+                if tool_call_count > self._max_tool_calls:
+                    error_msg = (
+                        f"Exceeded max tool calls ({self._max_tool_calls}). "
+                        "Aborting to prevent runaway execution."
+                    )
+                    self._memory.add_tool_result(block.id, error_msg)
+                    return error_msg
+
+                try:
+                    result = await self._tools.dispatch(block.name, block.input)
+                except ToolError as exc:
+                    result = f"Error: {exc}"
+
+                self._memory.add_tool_result(block.id, result)
 
             # --- Decide whether to stop ---
             if response.stop_reason == "end_turn":
-                # Extract final text response
                 final_text = ""
                 for block in response.content:
                     if block.type == "text":
                         final_text += block.text
-                # Also capture any text from tool_use rounds
-                # (the final text block is the summary)
-                if not final_text:
-                    final_text = "(No response text)"
-                self._memory.add_assistant(final_text)
-                return final_text
+                return final_text or "(No response text)"
 
             if response.stop_reason == "stop_sequence":
                 return "[Agent stopped — stop sequence encountered]"

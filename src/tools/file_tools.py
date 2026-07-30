@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import os
 import shutil
+from datetime import datetime
 from pathlib import Path
+from typing import Any
 
+from src.memory.file_index import FileIndex
 from src.tools.base import Tool, ToolError
 
 
@@ -127,8 +130,6 @@ class ListFilesTool(Tool):
             suffix = "/" if item.is_dir() else ""
             size = item.stat().st_size if item.is_file() else ""
             mtime = item.stat().st_mtime
-            from datetime import datetime
-
             modified = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
             lines.append(f"{modified}  {size:>8,}  {item.name}{suffix}")
 
@@ -295,3 +296,50 @@ class DeleteFileTool(Tool):
             raise ToolError(f"Failed to delete {p}: {exc}") from exc
 
         return f"Deleted {p}"
+
+
+class FileIndexTool(Tool):
+    """Index the filesystem so the agent can quickly answer structure questions."""
+
+    def __init__(self) -> None:
+        self._index = FileIndex()
+
+    @property
+    def name(self) -> str:
+        return "file_index"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Manage a cached index of the file system. Use 'refresh' to walk a "
+            "directory tree and record all files/dirs with sizes and timestamps. "
+            "Use 'query' to see what's already indexed."
+        )
+
+    @property
+    def input_schema(self) -> dict:
+        return {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["refresh", "query"],
+                    "description": "'refresh' walks a directory and builds the index; "
+                    "'query' returns a summary of what's cached",
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Directory path to refresh or query (default: working directory)",
+                },
+            },
+            "required": ["action"],
+        }
+
+    async def run(self, action: str, path: str | None = None, **kwargs: Any) -> str:
+        if action == "refresh":
+            root = Path(path).expanduser().resolve() if path else Path.cwd()
+            return self._index.refresh(root)
+        elif action == "query":
+            return self._index.query(path)
+        else:
+            raise ToolError(f"Unknown file_index action: {action!r}")

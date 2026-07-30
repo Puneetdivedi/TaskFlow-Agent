@@ -8,6 +8,7 @@ from typing import Any
 from src.tools.base import Tool, ToolError
 from src.tools.file_tools import (
     DeleteFileTool,
+    FileIndexTool,
     ListFilesTool,
     MoveFileTool,
     ReadFileTool,
@@ -20,7 +21,11 @@ from src.tools.shell_tools import RunShellTool
 class ToolRegistry:
     """Holds all tools and provides Anthropic-format descriptors + dispatch."""
 
-    def __init__(self, work_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        work_dir: Path | None = None,
+        safety_level: int = 1,
+    ) -> None:
         self._tools: dict[str, Tool] = {}
 
         # --- file tools ---
@@ -30,9 +35,10 @@ class ToolRegistry:
         self._register(SearchFilesTool())
         self._register(MoveFileTool())
         self._register(DeleteFileTool())
+        self._register(FileIndexTool())
 
         # --- shell ---
-        self._register(RunShellTool(work_dir=work_dir))
+        self._register(RunShellTool(work_dir=work_dir, safety_level=safety_level))
 
     # ------------------------------------------------------------------
     def _register(self, tool: Tool) -> None:

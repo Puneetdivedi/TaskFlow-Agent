@@ -129,6 +129,7 @@ def main() -> None:
         api_key=SETTINGS.anthropic_api_key,
         model=SETTINGS.anthropic_model,
         work_dir=SETTINGS.work_dir,
+        safety_level=SETTINGS.safety_level,
     )
 
     asyncio.run(run_cli(orchestrator))

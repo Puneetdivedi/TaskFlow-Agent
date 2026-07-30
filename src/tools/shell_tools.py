@@ -29,8 +29,13 @@ FORBIDDEN_PREFIXES = [
 class RunShellTool(Tool):
     """Execute a shell command and capture its output."""
 
-    def __init__(self, work_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        work_dir: Path | None = None,
+        safety_level: int = 1,
+    ) -> None:
         self._work_dir = work_dir or Path.cwd()
+        self._safety_level = safety_level
 
     @property
     def name(self) -> str:
@@ -74,6 +79,13 @@ class RunShellTool(Tool):
         work_dir: str | None = None,
         **kwargs,
     ) -> str:
+        # --- Safety level enforcement ---
+        if self._safety_level == 0:
+            raise ToolError(
+                "Shell execution is blocked at safety level 0. "
+                "Set SAFETY_LEVEL=1 or higher in .env to allow shell commands."
+            )
+
         # --- Validation ---
         stripped = command.strip().lower()
         for forbidden in FORBIDDEN_PREFIXES:
