@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from src.tools.base import Tool, ToolError
 from src.tools.file_tools import (
@@ -15,20 +18,30 @@ from src.tools.file_tools import (
     SearchFilesTool,
     WriteFileTool,
 )
+from src.tools.middleware import ToolPipeline
 from src.tools.shell_tools import RunShellTool
+
+if False:  # TYPE_CHECKING without runtime circulars
+    pass
 
 
 class ToolRegistry:
-    """Holds all tools and provides Anthropic-format descriptors + dispatch."""
+    """Holds all tools and provides Anthropic-format descriptors + dispatch.
+
+    Optionally accepts a middleware pipeline and extra third-party tools.
+    """
 
     def __init__(
         self,
         work_dir: Path | None = None,
         safety_level: int = 1,
+        extra_tools: list[Tool] | None = None,
+        pipeline: ToolPipeline | None = None,
     ) -> None:
         self._tools: dict[str, Tool] = {}
+        self._pipeline = pipeline
 
-        # --- file tools ---
+        # --- Built-in file tools ---
         self._register(ReadFileTool())
         self._register(WriteFileTool())
         self._register(ListFilesTool())
@@ -37,8 +50,14 @@ class ToolRegistry:
         self._register(DeleteFileTool())
         self._register(FileIndexTool())
 
-        # --- shell ---
+        # --- Built-in shell tool ---
         self._register(RunShellTool(work_dir=work_dir, safety_level=safety_level))
+
+        # --- Extra (plugin) tools ---
+        for t in (extra_tools or []):
+            self._register(t)
+
+        logger.info("ToolRegistry initialised with %d tools", len(self._tools))
 
     # ------------------------------------------------------------------
     def _register(self, tool: Tool) -> None:
@@ -67,13 +86,24 @@ class ToolRegistry:
         """Look up a tool by name, call it, and return its string result.
 
         Raises ToolError if the tool isn't found or execution fails.
+        When a middleware pipeline is configured, it wraps the dispatch.
         """
+        if self._pipeline is not None:
+            return await self._pipeline.run(self._run_tool, name, arguments)
+
+        return await self._run_tool(name, arguments)
+
+    async def _run_tool(self, name: str, arguments: dict[str, Any]) -> str:
+        """Direct tool execution — no middleware wrapper."""
         tool = self._tools.get(name)
         if tool is None:
+            logger.warning("Unknown tool requested: %r", name)
             raise ToolError(f"Unknown tool: {name!r} (available: {', '.join(self.tool_names)})")
+        logger.debug("Dispatching tool: %s", name)
         try:
             return await tool.run(**arguments)
         except ToolError:
             raise
         except Exception as exc:
+            logger.error("Tool %s raised unexpected error: %s", name, exc)
             raise ToolError(f"Tool {name} failed: {exc}") from exc

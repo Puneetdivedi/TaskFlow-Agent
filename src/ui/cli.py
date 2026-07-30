@@ -116,21 +116,24 @@ async def run_cli(orchestrator: AgentOrchestrator) -> None:
 
 def main() -> None:
     """Entry point for the CLI application."""
-    from config.settings import SETTINGS
+    from src.logging_config import configure_logging
 
-    if not SETTINGS.is_ready:
+    configure_logging()
+
+    from config.settings import init_settings
+
+    settings = init_settings()
+
+    if not settings.is_ready:
         console.print(
             "[bold red]ERROR:[/bold red] ANTHROPIC_API_KEY not set.\n"
             "Copy [bold].env.example[/bold] to [bold].env[/bold] and add your key."
         )
         sys.exit(1)
 
-    orchestrator = AgentOrchestrator(
-        api_key=SETTINGS.anthropic_api_key,
-        model=SETTINGS.anthropic_model,
-        work_dir=SETTINGS.work_dir,
-        safety_level=SETTINGS.safety_level,
-    )
+    from src.di.factories import create_production_orchestrator
+
+    orchestrator = create_production_orchestrator(settings=settings)
 
     asyncio.run(run_cli(orchestrator))
 

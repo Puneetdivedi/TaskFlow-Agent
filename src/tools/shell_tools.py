@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
 import shlex
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from src.tools.base import Tool, ToolError
 
@@ -72,6 +76,40 @@ class RunShellTool(Tool):
             "required": ["command"],
         }
 
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _validate_shell_command(command: str) -> None:
+        """Check *command* against safety rules; raise ``ToolError`` if blocked."""
+        stripped = command.strip().lower()
+        if not stripped:
+            raise ToolError("Empty command.")
+
+        # Forbidden-prefix check (e.g. ``rm -rf /``, ``dd if=``).
+        for forbidden in FORBIDDEN_PREFIXES:
+            if stripped.startswith(forbidden):
+                raise ToolError(
+                    f"Command blocked for safety: {forbidden!r} is not allowed."
+                )
+
+        # Prevent ``rm -rf`` with a non-absolute target.
+        try:
+            tokens = shlex.split(command, posix=False)
+        except ValueError as exc:
+            raise ToolError(f"Cannot parse command: {exc}") from exc
+
+        for i, token in enumerate(tokens):
+            if token == "rm" and i + 2 < len(tokens):
+                next_token = tokens[i + 1].replace("-", "").replace("r", "").replace("f", "")
+                # If after stripping -r/f there's nothing (or just "rf"),
+                # the next token is the target.
+                if next_token in ("f", "rf", ""):
+                    target = tokens[i + 2]
+                    if not os.path.isabs(target):
+                        raise ToolError(
+                            "rm -rf without an absolute path is blocked — "
+                            "please use the delete_file tool instead."
+                        )
+
     async def run(
         self,
         command: str,
@@ -87,22 +125,12 @@ class RunShellTool(Tool):
             )
 
         # --- Validation ---
-        stripped = command.strip().lower()
-        for forbidden in FORBIDDEN_PREFIXES:
-            if stripped.startswith(forbidden):
-                raise ToolError(
-                    f"Command blocked for safety: {forbidden!r} is not allowed."
-                )
-
-        # Prevent obvious chaining of dangerous commands
-        if "rm -rf" in stripped and "/" not in shlex.split(command)[-1]:
-            raise ToolError(
-                "rm -rf without an absolute path is blocked — "
-                "please use the delete_file tool instead."
-            )
+        self._validate_shell_command(command)
 
         cwd = Path(work_dir).resolve() if work_dir else self._work_dir
         timeout = min(timeout, 120)  # hard cap
+
+        logger.warning("Shell execution: command=%.200r cwd=%s", command, cwd)
 
         try:
             proc = await asyncio.create_subprocess_shell(

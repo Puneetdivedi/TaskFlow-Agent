@@ -1,10 +1,16 @@
-"""Application configuration — environment and settings management."""
+"""Application configuration — environment and settings management.
+
+Typical entry point::
+
+    from config.settings import init_settings
+    settings = init_settings()
+"""
 
 from __future__ import annotations
 
-from config.settings import SETTINGS, Settings
+from config.settings import Settings, init_settings
 
 __all__ = [
-    "SETTINGS",
     "Settings",
+    "init_settings",
 ]

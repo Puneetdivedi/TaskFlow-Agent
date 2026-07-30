@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
 import shutil
 from datetime import datetime
@@ -10,6 +12,8 @@ from typing import Any
 
 from src.memory.file_index import FileIndex
 from src.tools.base import Tool, ToolError
+
+logger = logging.getLogger(__name__)
 
 
 class ReadFileTool(Tool):
@@ -42,8 +46,9 @@ class ReadFileTool(Tool):
             raise ToolError(f"File not found: {p}")
         if not p.is_file():
             raise ToolError(f"Not a file: {p}")
+        logger.debug("Reading file: %s", p)
         try:
-            content = p.read_text(encoding="utf-8")
+            content = await asyncio.to_thread(p.read_text, encoding="utf-8")
         except Exception as exc:
             raise ToolError(f"Failed to read {p}: {exc}") from exc
         return content
@@ -73,9 +78,10 @@ class WriteFileTool(Tool):
 
     async def run(self, path: str, content: str, **kwargs) -> str:
         p = Path(path).expanduser().resolve()
-        p.parent.mkdir(parents=True, exist_ok=True)
+        logger.debug("Writing file: %s (%d bytes)", p, len(content))
+        await asyncio.to_thread(p.parent.mkdir, parents=True, exist_ok=True)
         try:
-            p.write_text(content, encoding="utf-8")
+            await asyncio.to_thread(p.write_text, content, encoding="utf-8")
         except Exception as exc:
             raise ToolError(f"Failed to write {p}: {exc}") from exc
         return f"Wrote {len(content)} bytes to {p}"
@@ -117,13 +123,22 @@ class ListFilesTool(Tool):
         if not p.is_dir():
             raise ToolError(f"Not a directory: {p}")
 
+        result = await asyncio.to_thread(self._list_files_sync, p, pattern)
+        if result is None:
+            return f"(empty directory: {p})"
+        header, lines = result
+        return header + "\n" + "\n".join(lines)
+
+    @staticmethod
+    def _list_files_sync(p: Path, pattern: str | None) -> tuple[str, list[str]] | None:
+        """Sync helper — runs in a thread to avoid blocking the event loop."""
         if pattern:
             items = list(p.glob(pattern))
         else:
             items = list(p.iterdir())
 
         if not items:
-            return f"(empty directory: {p})"
+            return None
 
         lines: list[str] = []
         for item in sorted(items, key=lambda x: (not x.is_dir(), x.name.lower())):
@@ -134,7 +149,7 @@ class ListFilesTool(Tool):
             lines.append(f"{modified}  {size:>8,}  {item.name}{suffix}")
 
         header = f"{p}/  ({len(items)} entries)"
-        return header + "\n" + "\n".join(lines)
+        return header, lines
 
 
 class SearchFilesTool(Tool):
@@ -184,8 +199,6 @@ class SearchFilesTool(Tool):
         max_results: int = 50,
         **kwargs,
     ) -> str:
-        import subprocess  # noqa: S404 — controlled grep, not arbitrary exec
-
         root = Path(path).expanduser().resolve() if path else Path.cwd()
         cmd = ["rg", "--no-heading", "--line-number", "--color", "never"]
         if glob:
@@ -193,21 +206,33 @@ class SearchFilesTool(Tool):
         cmd.extend([pattern, str(root)])
 
         try:
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=30  # noqa: S603
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
         except FileNotFoundError:
             return (
                 "ripgrep (rg) not found. Install it or use a fallback search. "
                 "https://github.com/BurntSushi/ripgrep"
             )
-        except subprocess.TimeoutExpired:
+
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(), timeout=30
+            )
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
             return f"Search timed out (pattern={pattern!r})"
 
-        if result.returncode not in (0, 1):
-            return f"Search error: {result.stderr.strip()}"
+        stdout_str = stdout.decode("utf-8") if stdout else ""
+        stderr_str = stderr.decode("utf-8") if stderr else ""
 
-        lines = result.stdout.strip().splitlines()
+        if process.returncode not in (0, 1):
+            return f"Search error: {stderr_str.strip()}"
+
+        lines = stdout_str.strip().splitlines()
         if not lines:
             return "No matches found."
 
@@ -246,9 +271,10 @@ class MoveFileTool(Tool):
         dst = Path(dest).expanduser().resolve()
         if not src.exists():
             raise ToolError(f"Source not found: {src}")
-        dst.parent.mkdir(parents=True, exist_ok=True)
+        logger.warning("Moving file: %s → %s", src, dst)
+        await asyncio.to_thread(dst.parent.mkdir, parents=True, exist_ok=True)
         try:
-            shutil.move(str(src), str(dst))
+            await asyncio.to_thread(shutil.move, str(src), str(dst))
         except Exception as exc:
             raise ToolError(f"Failed to move {src} → {dst}: {exc}") from exc
         return f"Moved {src.name} → {dst}"
@@ -284,14 +310,15 @@ class DeleteFileTool(Tool):
         if not p.exists():
             raise ToolError(f"Not found: {p}")
 
+        logger.warning("Deleting: %s (recursive=%s)", p, recursive)
         try:
             if p.is_dir():
                 if recursive:
-                    shutil.rmtree(p)
+                    await asyncio.to_thread(shutil.rmtree, p)
                 else:
-                    os.rmdir(p)
+                    await asyncio.to_thread(os.rmdir, p)
             else:
-                p.unlink()
+                await asyncio.to_thread(p.unlink)
         except OSError as exc:
             raise ToolError(f"Failed to delete {p}: {exc}") from exc
 
@@ -338,8 +365,8 @@ class FileIndexTool(Tool):
     async def run(self, action: str, path: str | None = None, **kwargs: Any) -> str:
         if action == "refresh":
             root = Path(path).expanduser().resolve() if path else Path.cwd()
-            return self._index.refresh(root)
+            return await asyncio.to_thread(self._index.refresh, root)
         elif action == "query":
-            return self._index.query(path)
+            return await asyncio.to_thread(self._index.query, path)
         else:
             raise ToolError(f"Unknown file_index action: {action!r}")
