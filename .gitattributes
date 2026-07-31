@@ -1,0 +1,17 @@
+# Normalise line endings — check out with native endings, commit as LF.
+* text=auto
+
+# Source and config files always commit as LF for cross-platform consistency.
+*.py     text eol=lf
+*.toml   text eol=lf
+*.yaml   text eol=lf
+*.yml    text eol=lf
+*.md     text eol=lf
+Makefile text eol=lf
+.gitignore text eol=lf
+.gitattributes text eol=lf
+
+# Binary files are never normalised.
+*.png    binary
+*.jpg    binary
+*.ico    binary

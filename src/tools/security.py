@@ -25,6 +25,5 @@ def validate_path_safe(path: Path, allowed_base: Path) -> None:
         resolved.relative_to(base)
     except ValueError:
         raise ToolError(
-            f"Path traversal blocked: {resolved} is outside the "
-            f"allowed base directory ({base})"
+            f"Path traversal blocked: {resolved} is outside the allowed base directory ({base})"
         ) from None

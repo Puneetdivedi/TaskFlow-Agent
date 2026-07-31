@@ -13,7 +13,7 @@ class IToolRegistry(Protocol):
         """Return the names of all registered tools."""
         ...
 
-    def anthropic_tool_defs(self) -> list[dict]:
+    def anthropic_tool_defs(self) -> list[dict[str, Any]]:
         """Return tool definitions in Anthropic's tool-use API format."""
         ...
 

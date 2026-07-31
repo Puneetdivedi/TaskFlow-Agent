@@ -51,7 +51,8 @@ def discover_tools() -> list[Tool]:
             else:
                 logger.warning(
                     "Plugin %s from %s does not look like a Tool — skipping",
-                    ep.name, ep.module,
+                    ep.name,
+                    ep.module,
                 )
         except Exception as exc:
             logger.error("Failed to load plugin %s: %s", ep.name, exc)

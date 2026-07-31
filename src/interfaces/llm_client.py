@@ -18,7 +18,7 @@ class LLMClient(Protocol):
         self,
         messages: list[dict[str, Any]],
         system: str | None = None,
-        tools: list[dict] | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> Any:
         """Send a message list to the LLM and return the response.
 

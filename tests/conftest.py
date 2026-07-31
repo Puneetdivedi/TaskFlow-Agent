@@ -19,7 +19,8 @@ class MockLLMClient:
         self._response = _make_end_turn_response("")
 
     async def send_messages(
-        self, messages: list[dict] | None = None,
+        self,
+        messages: list[dict] | None = None,
         system: str | None = None,
         tools: list[dict] | None = None,
     ) -> Any:

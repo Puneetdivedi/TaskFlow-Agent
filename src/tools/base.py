@@ -25,7 +25,7 @@ class Tool(ABC):
 
     @property
     @abstractmethod
-    def input_schema(self) -> dict:
+    def input_schema(self) -> dict[str, Any]:
         """JSON Schema for the tool's input parameters."""
 
     @abstractmethod

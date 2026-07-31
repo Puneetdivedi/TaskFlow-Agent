@@ -17,7 +17,7 @@ class IMemory(Protocol):
         """Append a user message."""
         ...
 
-    def add_assistant(self, content: str | list[dict]) -> None:
+    def add_assistant(self, content: str | list[dict[str, Any]]) -> None:
         """Append an assistant message (text or content blocks)."""
         ...
 

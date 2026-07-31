@@ -28,7 +28,7 @@ class ConversationMemory:
     def add_user(self, content: str) -> None:
         self._messages.append({"role": "user", "content": content})
 
-    def add_assistant(self, content: str | list[dict]) -> None:
+    def add_assistant(self, content: str | list[dict[str, Any]]) -> None:
         self._messages.append({"role": "assistant", "content": content})
 
     def add_tool_result(self, tool_use_id: str, content: str) -> None:
@@ -90,14 +90,15 @@ class ConversationMemory:
             # Remove this user message + its assistant response.
             # (After removal, any tool_result messages that follow the
             #  removed assistant will be cleaned up on the next iteration.)
-            self._messages.pop(idx)      # user message
+            self._messages.pop(idx)  # user message
             if idx < len(self._messages) and self._messages[idx].get("role") == "assistant":
                 self._messages.pop(idx)  # assistant response
 
             if self._estimate_tokens(str(self._messages)) <= self._max_tokens:
                 logger.debug(
                     "Prune finished — %d messages remaining (from %d)",
-                    len(self._messages), before,
+                    len(self._messages),
+                    before,
                 )
                 break
 
@@ -105,7 +106,8 @@ class ConversationMemory:
         if len(self._messages) <= 2:
             logger.warning(
                 "Prune hit safety floor — %d messages remain (started from %d)",
-                len(self._messages), before,
+                len(self._messages),
+                before,
             )
 
     def clear(self) -> None:

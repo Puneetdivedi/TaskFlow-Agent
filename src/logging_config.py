@@ -34,9 +34,7 @@ def configure_logging() -> None:
     level_name = os.getenv("AGENT_LOG_LEVEL", "INFO").upper()
     level = getattr(logging, level_name, logging.INFO)
 
-    fmt = (
-        "%(asctime)s  %(name)-35s %(levelname)-8s %(message)s"
-    )
+    fmt = "%(asctime)s  %(name)-35s %(levelname)-8s %(message)s"
     datefmt = "%Y-%m-%dT%H:%M:%S%z"
 
     handler: logging.Handler

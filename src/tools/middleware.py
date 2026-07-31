@@ -172,8 +172,7 @@ class SafetyMiddleware(ToolMiddleware):
     ) -> dict[str, Any]:
         if self._allowed is not None and tool_name not in self._allowed:
             raise ToolError(
-                f"SafetyMiddleware blocked: {tool_name!r} is not in "
-                f"the allowed tool list"
+                f"SafetyMiddleware blocked: {tool_name!r} is not in the allowed tool list"
             )
         return arguments
 

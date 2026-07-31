@@ -49,7 +49,7 @@ class ClaudeClient:
         self,
         messages: list[dict[str, Any]],
         system: str | None = None,
-        tools: list[dict] | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> Any:
         """Send a message list to Claude and return *the raw response object*.
 
@@ -87,28 +87,27 @@ class ClaudeClient:
                 if attempt < _MAX_RETRIES:
                     delay = min(_BASE_DELAY * 2**attempt + random.uniform(0, 1), _MAX_DELAY)
                     logger.warning(
-                        "Claude API retryable error (attempt %d/%d): %s. "
-                        "Retrying in %.1fs…",
-                        attempt, _MAX_RETRIES, exc.__class__.__name__, delay,
+                        "Claude API retryable error (attempt %d/%d): %s. Retrying in %.1fs…",
+                        attempt,
+                        _MAX_RETRIES,
+                        exc.__class__.__name__,
+                        delay,
                     )
                     await asyncio.sleep(delay)
                 else:
                     logger.error(
                         "Claude API failed after %d retries: %s",
-                        _MAX_RETRIES, exc,
+                        _MAX_RETRIES,
+                        exc,
                     )
             except APITimeoutError:
                 raise ClaudeClientError(
                     "Request to Anthropic API timed out. Check your network connection."
                 )
             except APIError as exc:
-                raise ClaudeClientError(
-                    f"Anthropic API error: {exc}"
-                )
+                raise ClaudeClientError(f"Anthropic API error: {exc}")
             except Exception as exc:
-                raise ClaudeClientError(
-                    f"Unexpected error communicating with Anthropic API: {exc}"
-                )
+                raise ClaudeClientError(f"Unexpected error communicating with Anthropic API: {exc}")
 
         # All retries exhausted
         raise ClaudeClientError(

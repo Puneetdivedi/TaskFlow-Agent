@@ -7,6 +7,7 @@ import logging
 import os
 import shlex
 from pathlib import Path
+from typing import Any
 
 from src.tools.base import Tool, ToolError
 
@@ -53,7 +54,7 @@ class RunShellTool(Tool):
         )
 
     @property
-    def input_schema(self) -> dict:
+    def input_schema(self) -> dict[str, Any]:
         return {
             "type": "object",
             "properties": {
@@ -67,9 +68,7 @@ class RunShellTool(Tool):
                 },
                 "work_dir": {
                     "type": "string",
-                    "description": (
-                        "Working directory for the command. Defaults to project root."
-                    ),
+                    "description": ("Working directory for the command. Defaults to project root."),
                 },
             },
             "required": ["command"],
@@ -86,9 +85,7 @@ class RunShellTool(Tool):
         # Forbidden-prefix check (e.g. ``rm -rf /``, ``dd if=``).
         for forbidden in FORBIDDEN_PREFIXES:
             if stripped.startswith(forbidden):
-                raise ToolError(
-                    f"Command blocked for safety: {forbidden!r} is not allowed."
-                )
+                raise ToolError(f"Command blocked for safety: {forbidden!r} is not allowed.")
 
         # Prevent ``rm -rf`` with a non-absolute target.
         try:
@@ -109,12 +106,12 @@ class RunShellTool(Tool):
                             "please use the delete_file tool instead."
                         )
 
-    async def run(
+    async def run(  # type: ignore[override]
         self,
         command: str,
         timeout: int = 60,
         work_dir: str | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> str:
         # --- Safety level enforcement ---
         if self._safety_level == 0:
@@ -138,9 +135,7 @@ class RunShellTool(Tool):
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(cwd),
             )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout
-            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except asyncio.TimeoutError:
             return f"Command timed out after {timeout}s (output so far discarded)."
         except Exception as exc:
