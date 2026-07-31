@@ -15,6 +15,14 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 
+def _default_session_dir() -> Path:
+    """Return the session directory — ``SESSION_DIR`` env override or the default."""
+    configured = os.getenv("SESSION_DIR")
+    if configured:
+        return Path(configured).expanduser()
+    return Path.home() / ".taskflow" / "sessions"
+
+
 @dataclass
 class Settings:
     """Immutable-ish settings container.
@@ -35,6 +43,7 @@ class Settings:
     # --- Paths ---
     work_dir: Path = field(default_factory=lambda: Path(os.getenv("AGENT_WORK_DIR", ".")).resolve())
     memory_dir: Path = field(default_factory=lambda: Path.home() / ".taskflow" / "memory")
+    session_dir: Path = field(default_factory=_default_session_dir)
 
     # --- Limits ---
     max_tool_calls_per_turn: int = field(
@@ -53,6 +62,7 @@ class Settings:
         _validate_settings(self)
 
         self.memory_dir.mkdir(parents=True, exist_ok=True)
+        self.session_dir.mkdir(parents=True, exist_ok=True)
 
     @property
     def is_ready(self) -> bool:

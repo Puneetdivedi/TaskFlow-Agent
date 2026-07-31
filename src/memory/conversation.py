@@ -110,5 +110,9 @@ class ConversationMemory:
                 before,
             )
 
+    def restore(self, messages: list[dict[str, Any]]) -> None:
+        """Replace the current history with *messages* (e.g. a saved session)."""
+        self._messages = list(messages)
+
     def clear(self) -> None:
         self._messages.clear()

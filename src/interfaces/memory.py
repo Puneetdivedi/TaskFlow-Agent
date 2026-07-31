@@ -29,6 +29,10 @@ class IMemory(Protocol):
         """Drop oldest exchanges to stay within a token budget."""
         ...
 
+    def restore(self, messages: list[dict[str, Any]]) -> None:
+        """Replace the current history with *messages* (e.g. a saved session)."""
+        ...
+
     def clear(self) -> None:
         """Remove all messages."""
         ...
