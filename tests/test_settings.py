@@ -69,3 +69,14 @@ class TestSettings:
         Settings(memory_dir=mem_dir)
         assert mem_dir.exists()
         assert mem_dir.is_dir()
+
+    def test_session_dir_defaults_to_taskflow_sessions(self) -> None:
+        s = Settings(session_dir=Path.home() / ".taskflow" / "sessions")
+        assert s.session_dir == Path.home() / ".taskflow" / "sessions"
+
+    def test_session_dir_created(self, tmp_path: Path) -> None:
+        """session_dir should be created in __post_init__."""
+        sess_dir = tmp_path / ".taskflow" / "sessions"
+        Settings(session_dir=sess_dir)
+        assert sess_dir.exists()
+        assert sess_dir.is_dir()

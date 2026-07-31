@@ -23,7 +23,12 @@ python -m src.main
 | `/tools` | List all available agent tools |
 | `/clear` | Clear conversation history |
 | `/history` | Show message count |
-| `/exit` | Exit the agent |
+| `/session new [name]` | Start a new session (auto-saves the current one) |
+| `/session save [name]` | Save the current conversation to a named session |
+| `/session load <name>` | Load a saved session (auto-saves the current one) |
+| `/session delete <name>` | Delete a saved session |
+| `/sessions` | List saved sessions |
+| `/exit` | Exit the agent (auto-saves the current session) |
 
 ## Available Tools
 
@@ -56,9 +61,10 @@ src/
 │   ├── shell_tools.py     # RunShell with safety guards
 │   └── registry.py        # Central tool registry + dispatch
 ├── memory/
-│   ├── __init__.py        # Exports: ConversationMemory, FileIndex
+│   ├── __init__.py        # Exports: ConversationMemory, FileIndex, SessionStore
 │   ├── conversation.py    # Token-aware conversation history with pruning
-│   └── file_index.py      # Persistent filesystem index (JSON cache)
+│   ├── file_index.py      # Persistent filesystem index (JSON cache)
+│   └── session_store.py   # Named session persistence (JSON)
 └── ui/
     ├── __init__.py         # Exports: cli_main
     └── cli.py              # Rich terminal UI (panels, tables, markdown)
@@ -77,9 +83,26 @@ tests/
 - [x] File system index (cache and query directory structure)
 - [x] Shell execution tool with safety restrictions
 - [x] Conversation memory with token-aware pruning
+- [x] Persistent named sessions (save/load/resume conversations)
 - [x] API error handling (rate limits, timeouts, server errors)
 - [x] Safety level enforcement
 - [x] Rich CLI interface (colored output, tables, markdown)
+
+## Sessions
+
+Conversation history survives restarts via named, persistent sessions. When you
+start the agent it offers to **resume the most recent session**; the current
+session is **auto-saved on exit** and whenever you switch sessions.
+
+Sessions are stored as JSON files under `~/.taskflow/sessions/` (override with
+`SESSION_DIR`). Session names are slugs (`letters`, `digits`, `.`, `_`, `-`) so
+they are safe to use as filenames.
+
+- `/session new [name]` — start a fresh session (current one is saved first)
+- `/session save [name]` — checkpoint the current conversation
+- `/session load <name>` — open a saved session (current one is saved first)
+- `/session delete <name>` — permanently remove a saved session
+- `/sessions` — list all saved sessions
 
 ## Configuration
 
@@ -91,6 +114,7 @@ Set these in `.env` (copy from `.env.example`):
 | `ANTHROPIC_MODEL` | `claude-sonnet-5-20250611` | Model to use |
 | `SAFETY_LEVEL` | `1` | Permission tier (0–3) |
 | `AGENT_WORK_DIR` | `.` | Working directory for the agent |
+| `SESSION_DIR` | `~/.taskflow/sessions` | Where named sessions are stored |
 
 ## Safety
 

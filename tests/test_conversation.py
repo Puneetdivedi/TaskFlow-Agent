@@ -84,3 +84,35 @@ class TestConversationMemory:
         mem.prune()
         # Should keep at least 1 message
         assert len(mem.messages) >= 1
+
+    def test_restore_replaces_messages(self) -> None:
+        mem = ConversationMemory()
+        mem.add_user("Hello")
+        mem.add_assistant("Hi")
+        saved = mem.messages
+        mem.add_user("extra")
+        mem.restore(saved)
+        assert mem.messages == saved
+
+    def test_restore_empty_list_clears(self) -> None:
+        mem = ConversationMemory()
+        mem.add_user("Hello")
+        mem.restore([])
+        assert mem.messages == []
+        assert mem.is_empty
+
+    def test_restore_preserves_tool_result_blocks(self) -> None:
+        mem = ConversationMemory()
+        mem.add_tool_result("toolu_1", "result")
+        saved = mem.messages
+        restored = ConversationMemory()
+        restored.restore(saved)
+        assert restored.messages == saved
+        assert restored.messages[0]["content"][0]["type"] == "tool_result"
+
+    def test_restore_does_not_share_the_input_list(self) -> None:
+        mem = ConversationMemory()
+        incoming = [{"role": "user", "content": "a"}]
+        mem.restore(incoming)
+        incoming.append({"role": "user", "content": "b"})
+        assert len(mem.messages) == 1

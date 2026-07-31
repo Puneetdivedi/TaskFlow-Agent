@@ -58,6 +58,10 @@ class MockMemory:
     def prune(self) -> None:
         pass
 
+    def restore(self, messages: list[dict]) -> None:
+        self.messages = list(messages)
+        self.history.clear()
+
     def clear(self) -> None:
         self.messages.clear()
         self.history.clear()
