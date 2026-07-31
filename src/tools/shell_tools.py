@@ -8,10 +8,9 @@ import os
 import shlex
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
-
 from src.tools.base import Tool, ToolError
 
+logger = logging.getLogger(__name__)
 
 # Commands that are NEVER allowed regardless of safety level
 FORBIDDEN_PREFIXES = [

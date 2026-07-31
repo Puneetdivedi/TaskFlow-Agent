@@ -356,7 +356,10 @@ class FileIndexTool(Tool):
                 },
                 "path": {
                     "type": "string",
-                    "description": "Directory path to refresh or query (default: working directory)",
+                    "description": (
+                        "Directory path to refresh or query "
+                        "(default: working directory)"
+                    ),
                 },
             },
             "required": ["action"],

@@ -6,8 +6,6 @@ to obtain a fully wired orchestrator ready for use.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from config.settings import Settings
 from src.agent.claude_client import ClaudeClient
 from src.agent.orchestrator import AgentOrchestrator

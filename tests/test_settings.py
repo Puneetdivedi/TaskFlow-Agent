@@ -66,6 +66,6 @@ class TestSettings:
     def test_memory_dir_created(self, tmp_path: Path) -> None:
         """memory_dir should be created in __post_init__."""
         mem_dir = tmp_path / ".taskflow" / "memory"
-        s = Settings(memory_dir=mem_dir)
+        Settings(memory_dir=mem_dir)
         assert mem_dir.exists()
         assert mem_dir.is_dir()

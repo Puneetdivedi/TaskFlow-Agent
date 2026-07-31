@@ -7,15 +7,15 @@ import logging
 import random
 from typing import Any
 
-logger = logging.getLogger(__name__)
-
 from anthropic import (
-    AsyncAnthropic,
     APIError,
     APITimeoutError,
+    AsyncAnthropic,
     InternalServerError,
     RateLimitError,
 )
+
+logger = logging.getLogger(__name__)
 
 _RETRYABLE_STATUSES = (RateLimitError, InternalServerError)
 _MAX_RETRIES = 5

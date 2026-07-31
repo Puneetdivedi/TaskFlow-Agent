@@ -6,8 +6,6 @@ import logging
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger(__name__)
-
 from src.tools.base import Tool, ToolError
 from src.tools.file_tools import (
     DeleteFileTool,
@@ -20,6 +18,8 @@ from src.tools.file_tools import (
 )
 from src.tools.middleware import ToolPipeline
 from src.tools.shell_tools import RunShellTool
+
+logger = logging.getLogger(__name__)
 
 if False:  # TYPE_CHECKING without runtime circulars
     pass

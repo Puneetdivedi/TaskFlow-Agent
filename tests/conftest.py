@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -44,7 +44,13 @@ class MockMemory:
         self.messages.append(
             {
                 "role": "user",
-                "content": [{"type": "tool_result", "tool_use_id": tool_use_id, "content": content}],
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tool_use_id,
+                        "content": content,
+                    }
+                ],
             }
         )
 
@@ -67,7 +73,13 @@ class MockToolRegistry:
         return ["mock_tool"]
 
     def anthropic_tool_defs(self) -> list[dict]:
-        return [{"name": "mock_tool", "description": "A mock tool", "input_schema": {"type": "object", "properties": {}}}]
+        return [
+            {
+                "name": "mock_tool",
+                "description": "A mock tool",
+                "input_schema": {"type": "object", "properties": {}},
+            }
+        ]
 
     async def dispatch(self, name: str, arguments: dict) -> str:
         self._call_count += 1
