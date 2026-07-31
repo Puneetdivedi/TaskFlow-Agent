@@ -28,7 +28,7 @@ class ReadFileTool(Tool):
         return "Read the full contents of a text file at the given path."
 
     @property
-    def input_schema(self) -> dict:
+    def input_schema(self) -> dict[str, Any]:
         return {
             "type": "object",
             "properties": {
@@ -40,7 +40,7 @@ class ReadFileTool(Tool):
             "required": ["path"],
         }
 
-    async def run(self, path: str, **kwargs) -> str:
+    async def run(self, path: str, **kwargs: Any) -> str:  # type: ignore[override]
         p = Path(path).expanduser().resolve()
         if not p.exists():
             raise ToolError(f"File not found: {p}")
@@ -66,7 +66,7 @@ class WriteFileTool(Tool):
         return "Write text content to a file. Creates parent directories if they don't exist."
 
     @property
-    def input_schema(self) -> dict:
+    def input_schema(self) -> dict[str, Any]:
         return {
             "type": "object",
             "properties": {
@@ -76,7 +76,7 @@ class WriteFileTool(Tool):
             "required": ["path", "content"],
         }
 
-    async def run(self, path: str, content: str, **kwargs) -> str:
+    async def run(self, path: str, content: str, **kwargs: Any) -> str:  # type: ignore[override]
         p = Path(path).expanduser().resolve()
         logger.debug("Writing file: %s (%d bytes)", p, len(content))
         await asyncio.to_thread(p.parent.mkdir, parents=True, exist_ok=True)
@@ -97,12 +97,11 @@ class ListFilesTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "List the contents of a directory. Returns names, sizes, and "
-            "last-modified timestamps."
+            "List the contents of a directory. Returns names, sizes, and last-modified timestamps."
         )
 
     @property
-    def input_schema(self) -> dict:
+    def input_schema(self) -> dict[str, Any]:
         return {
             "type": "object",
             "properties": {
@@ -118,7 +117,7 @@ class ListFilesTool(Tool):
             "required": [],
         }
 
-    async def run(self, path: str | None = None, pattern: str | None = None, **kwargs) -> str:
+    async def run(self, path: str | None = None, pattern: str | None = None, **kwargs: Any) -> str:
         p = Path(path).expanduser().resolve() if path else Path.cwd()
         if not p.is_dir():
             raise ToolError(f"Not a directory: {p}")
@@ -167,7 +166,7 @@ class SearchFilesTool(Tool):
         )
 
     @property
-    def input_schema(self) -> dict:
+    def input_schema(self) -> dict[str, Any]:
         return {
             "type": "object",
             "properties": {
@@ -191,13 +190,13 @@ class SearchFilesTool(Tool):
             "required": ["pattern"],
         }
 
-    async def run(
+    async def run(  # type: ignore[override]
         self,
         pattern: str,
         path: str | None = None,
         glob: str | None = None,
         max_results: int = 50,
-        **kwargs,
+        **kwargs: Any,
     ) -> str:
         root = Path(path).expanduser().resolve() if path else Path.cwd()
         cmd = ["rg", "--no-heading", "--line-number", "--color", "never"]
@@ -218,9 +217,7 @@ class SearchFilesTool(Tool):
             )
 
         try:
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(), timeout=30
-            )
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30)
         except asyncio.TimeoutError:
             process.kill()
             await process.wait()
@@ -256,7 +253,7 @@ class MoveFileTool(Tool):
         return "Move or rename a file or directory."
 
     @property
-    def input_schema(self) -> dict:
+    def input_schema(self) -> dict[str, Any]:
         return {
             "type": "object",
             "properties": {
@@ -266,7 +263,7 @@ class MoveFileTool(Tool):
             "required": ["source", "dest"],
         }
 
-    async def run(self, source: str, dest: str, **kwargs) -> str:
+    async def run(self, source: str, dest: str, **kwargs: Any) -> str:  # type: ignore[override]
         src = Path(source).expanduser().resolve()
         dst = Path(dest).expanduser().resolve()
         if not src.exists():
@@ -292,7 +289,7 @@ class DeleteFileTool(Tool):
         return "Delete a file or an empty directory. Use with caution."
 
     @property
-    def input_schema(self) -> dict:
+    def input_schema(self) -> dict[str, Any]:
         return {
             "type": "object",
             "properties": {
@@ -305,7 +302,12 @@ class DeleteFileTool(Tool):
             "required": ["path"],
         }
 
-    async def run(self, path: str, recursive: bool = False, **kwargs) -> str:
+    async def run(  # type: ignore[override]
+        self,
+        path: str,
+        recursive: bool = False,
+        **kwargs: Any,
+    ) -> str:
         p = Path(path).expanduser().resolve()
         if not p.exists():
             raise ToolError(f"Not found: {p}")
@@ -344,7 +346,7 @@ class FileIndexTool(Tool):
         )
 
     @property
-    def input_schema(self) -> dict:
+    def input_schema(self) -> dict[str, Any]:
         return {
             "type": "object",
             "properties": {
@@ -357,15 +359,19 @@ class FileIndexTool(Tool):
                 "path": {
                     "type": "string",
                     "description": (
-                        "Directory path to refresh or query "
-                        "(default: working directory)"
+                        "Directory path to refresh or query (default: working directory)"
                     ),
                 },
             },
             "required": ["action"],
         }
 
-    async def run(self, action: str, path: str | None = None, **kwargs: Any) -> str:
+    async def run(  # type: ignore[override]
+        self,
+        action: str,
+        path: str | None = None,
+        **kwargs: Any,
+    ) -> str:
         if action == "refresh":
             root = Path(path).expanduser().resolve() if path else Path.cwd()
             return await asyncio.to_thread(self._index.refresh, root)

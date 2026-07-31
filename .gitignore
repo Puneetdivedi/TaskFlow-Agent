@@ -9,6 +9,14 @@ build/
 venv/
 env/
 
+# Test & coverage artifacts
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
 # Environment
 .env
 *.env.local
@@ -27,6 +35,7 @@ Thumbs.db
 *.log
 /memory/
 data/
+.taskflow/
 
 # Config overrides
 config/local.py

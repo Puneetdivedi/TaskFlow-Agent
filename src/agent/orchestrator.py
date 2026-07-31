@@ -91,7 +91,7 @@ class AgentOrchestrator:
                 return error_text
 
             # --- Build a single assistant response from all content blocks ---
-            assistant_content: list[dict] = []
+            assistant_content: list[dict[str, Any]] = []
             tool_blocks: list[Any] = []
 
             for block in response.content:

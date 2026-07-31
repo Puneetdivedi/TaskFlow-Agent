@@ -24,25 +24,17 @@ class Settings:
     """
 
     # --- Anthropic ---
-    anthropic_api_key: str = field(
-        default_factory=lambda: os.getenv("ANTHROPIC_API_KEY", "")
-    )
+    anthropic_api_key: str = field(default_factory=lambda: os.getenv("ANTHROPIC_API_KEY", ""))
     anthropic_model: str = field(
         default_factory=lambda: os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5-20250611")
     )
 
     # --- Safety ---
-    safety_level: int = field(
-        default_factory=lambda: int(os.getenv("SAFETY_LEVEL", "1"))
-    )
+    safety_level: int = field(default_factory=lambda: int(os.getenv("SAFETY_LEVEL", "1")))
 
     # --- Paths ---
-    work_dir: Path = field(
-        default_factory=lambda: Path(os.getenv("AGENT_WORK_DIR", ".")).resolve()
-    )
-    memory_dir: Path = field(
-        default_factory=lambda: Path.home() / ".taskflow" / "memory"
-    )
+    work_dir: Path = field(default_factory=lambda: Path(os.getenv("AGENT_WORK_DIR", ".")).resolve())
+    memory_dir: Path = field(default_factory=lambda: Path.home() / ".taskflow" / "memory")
 
     # --- Limits ---
     max_tool_calls_per_turn: int = field(
@@ -53,12 +45,8 @@ class Settings:
     )
 
     # --- Logging ---
-    log_level: str = field(
-        default_factory=lambda: os.getenv("AGENT_LOG_LEVEL", "INFO").upper()
-    )
-    log_file: str = field(
-        default_factory=lambda: os.getenv("AGENT_LOG_FILE", "")
-    )
+    log_level: str = field(default_factory=lambda: os.getenv("AGENT_LOG_LEVEL", "INFO").upper())
+    log_file: str = field(default_factory=lambda: os.getenv("AGENT_LOG_FILE", ""))
 
     def __post_init__(self) -> None:
         """Validate and prepare the configuration."""
@@ -74,25 +62,18 @@ class Settings:
 def _validate_settings(s: Settings) -> None:
     """Validate settings values, raising ``ValueError`` for invalid ones."""
     if not 0 <= s.safety_level <= 3:
-        raise ValueError(
-            f"SAFETY_LEVEL must be 0-3, got {s.safety_level}"
-        )
+        raise ValueError(f"SAFETY_LEVEL must be 0-3, got {s.safety_level}")
 
     if s.max_tool_calls_per_turn < 1:
-        raise ValueError(
-            f"MAX_TOOL_CALLS must be >= 1, got {s.max_tool_calls_per_turn}"
-        )
+        raise ValueError(f"MAX_TOOL_CALLS must be >= 1, got {s.max_tool_calls_per_turn}")
 
     if s.max_history_tokens < 1000:
-        raise ValueError(
-            f"MAX_HISTORY_TOKENS must be >= 1000, got {s.max_history_tokens}"
-        )
+        raise ValueError(f"MAX_HISTORY_TOKENS must be >= 1000, got {s.max_history_tokens}")
 
     valid_levels = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
     if s.log_level not in valid_levels:
         raise ValueError(
-            f"AGENT_LOG_LEVEL must be one of {', '.join(sorted(valid_levels))}, "
-            f"got {s.log_level!r}"
+            f"AGENT_LOG_LEVEL must be one of {', '.join(sorted(valid_levels))}, got {s.log_level!r}"
         )
 
 

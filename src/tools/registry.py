@@ -54,7 +54,7 @@ class ToolRegistry:
         self._register(RunShellTool(work_dir=work_dir, safety_level=safety_level))
 
         # --- Extra (plugin) tools ---
-        for t in (extra_tools or []):
+        for t in extra_tools or []:
             self._register(t)
 
         logger.info("ToolRegistry initialised with %d tools", len(self._tools))
@@ -70,7 +70,7 @@ class ToolRegistry:
         return list(self._tools.keys())
 
     # ------------------------------------------------------------------
-    def anthropic_tool_defs(self) -> list[dict]:
+    def anthropic_tool_defs(self) -> list[dict[str, Any]]:
         """Return tool descriptors in Anthropic's tool-use format."""
         return [
             {

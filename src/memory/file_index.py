@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 
 class FileIndex:
@@ -15,7 +16,7 @@ class FileIndex:
 
     def __init__(self, index_path: Path | None = None) -> None:
         self._index_path = index_path or Path.home() / ".taskflow" / "file_index.json"
-        self._data: dict[str, dict] = {}
+        self._data: dict[str, dict[str, Any]] = {}
         self._load()
 
     # ------------------------------------------------------------------
@@ -28,9 +29,7 @@ class FileIndex:
 
     def _save(self) -> None:
         self._index_path.parent.mkdir(parents=True, exist_ok=True)
-        self._index_path.write_text(
-            json.dumps(self._data, indent=2), encoding="utf-8"
-        )
+        self._index_path.write_text(json.dumps(self._data, indent=2), encoding="utf-8")
 
     # ------------------------------------------------------------------
     def refresh(self, root: Path | str) -> str:
@@ -42,7 +41,7 @@ class FileIndex:
         if not root.is_dir():
             return f"Not a directory: {root}"
 
-        entries: dict[str, dict] = {}
+        entries: dict[str, dict[str, Any]] = {}
         total_size = 0
         file_count = 0
         dir_count = 0
@@ -74,10 +73,7 @@ class FileIndex:
         }
         self._save()
 
-        return (
-            f"Indexed {root}: {file_count} files, {dir_count} directories, "
-            f"{total_size:,} bytes"
-        )
+        return f"Indexed {root}: {file_count} files, {dir_count} directories, {total_size:,} bytes"
 
     # ------------------------------------------------------------------
     def query(self, path: str | None = None) -> str:

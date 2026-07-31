@@ -19,31 +19,42 @@ from src.tools.registry import ToolRegistry
 
 def _build_middleware() -> ToolPipeline:
     """Build the default middleware chain for production."""
-    return ToolPipeline(middleware=[
-        LoggingMiddleware(),
-        AuditMiddleware(),
-    ])
+    return ToolPipeline(
+        middleware=[
+            LoggingMiddleware(),
+            AuditMiddleware(),
+        ]
+    )
 
 
 def register_defaults(container: DIContainer, settings: Settings) -> None:
     """Register the default (production) implementations with *container*."""
 
-    container.register(LLMClient, lambda c: ClaudeClient(
-        api_key=settings.anthropic_api_key,
-        model=settings.anthropic_model,
-    ))
+    container.register(
+        LLMClient,
+        lambda c: ClaudeClient(
+            api_key=settings.anthropic_api_key,
+            model=settings.anthropic_model,
+        ),
+    )
 
     extra_tools = discover_tools()
-    container.register(IToolRegistry, lambda c: ToolRegistry(
-        work_dir=settings.work_dir,
-        safety_level=settings.safety_level,
-        extra_tools=extra_tools,
-        pipeline=_build_middleware(),
-    ))
+    container.register(
+        IToolRegistry,
+        lambda c: ToolRegistry(
+            work_dir=settings.work_dir,
+            safety_level=settings.safety_level,
+            extra_tools=extra_tools,
+            pipeline=_build_middleware(),
+        ),
+    )
 
-    container.register(IMemory, lambda c: ConversationMemory(
-        max_tokens=settings.max_history_tokens,
-    ))
+    container.register(
+        IMemory,
+        lambda c: ConversationMemory(
+            max_tokens=settings.max_history_tokens,
+        ),
+    )
 
 
 def create_production_orchestrator(
@@ -56,6 +67,7 @@ def create_production_orchestrator(
     """
     if settings is None:
         from config.settings import init_settings
+
         settings = init_settings()
 
     container = DIContainer()
