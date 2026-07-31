@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class ConversationMemory:
@@ -58,7 +61,11 @@ class ConversationMemory:
         The most recent message(s) are always preserved.
         """
         if self._estimate_tokens(str(self._messages)) <= self._max_tokens:
+            logger.debug("Prune skipped — under token limit (%d messages)", len(self._messages))
             return
+
+        before = len(self._messages)
+        logger.info("Pruning conversation — %d messages before", before)
 
         # Strategy: count how many messages to drop from the front,
         # removing whole user↔assistant rounds (including any trailing
@@ -88,7 +95,18 @@ class ConversationMemory:
                 self._messages.pop(idx)  # assistant response
 
             if self._estimate_tokens(str(self._messages)) <= self._max_tokens:
+                logger.debug(
+                    "Prune finished — %d messages remaining (from %d)",
+                    len(self._messages), before,
+                )
                 break
+
+        # Safety valve — if we didn't break naturally, log it
+        if len(self._messages) <= 2:
+            logger.warning(
+                "Prune hit safety floor — %d messages remain (started from %d)",
+                len(self._messages), before,
+            )
 
     def clear(self) -> None:
         self._messages.clear()
