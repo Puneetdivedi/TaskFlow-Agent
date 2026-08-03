@@ -1,4 +1,4 @@
-"""Agent tools — file system, shell, and utility tools."""
+"""Agent tools — file system, shell, task, and utility tools."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from src.tools.file_tools import (
 )
 from src.tools.registry import ToolRegistry
 from src.tools.shell_tools import RunShellTool
+from src.tools.task_tools import TaskTool
 
 __all__ = [
     "DeleteFileTool",
@@ -23,6 +24,7 @@ __all__ = [
     "ReadFileTool",
     "RunShellTool",
     "SearchFilesTool",
+    "TaskTool",
     "Tool",
     "ToolError",
     "ToolRegistry",

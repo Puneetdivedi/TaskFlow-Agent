@@ -1,8 +1,9 @@
 """Production wiring — assembles dependencies for ``AgentOrchestrator``.
 
 Call :func:`create_production_app` from the CLI entry point to obtain a
-fully wired orchestrator and session store. :func:`create_production_orchestrator`
-remains available for callers that only need the orchestrator.
+fully wired orchestrator, session store, and task store.
+:func:`create_production_orchestrator` remains available for callers that
+only need the orchestrator.
 """
 
 from __future__ import annotations
@@ -13,9 +14,10 @@ from config.settings import Settings
 from src.agent.claude_client import ClaudeClient
 from src.agent.orchestrator import AgentOrchestrator
 from src.di.container import DIContainer
-from src.interfaces import IMemory, ISessionStore, IToolRegistry, LLMClient
+from src.interfaces import IMemory, ISessionStore, ITaskStore, IToolRegistry, LLMClient
 from src.memory.conversation import ConversationMemory
 from src.memory.session_store import SessionStore
+from src.memory.task_store import TaskStore
 from src.plugins import discover_tools
 from src.tools.middleware import AuditMiddleware, LoggingMiddleware, ToolPipeline
 from src.tools.registry import ToolRegistry
@@ -23,10 +25,11 @@ from src.tools.registry import ToolRegistry
 
 @dataclass(frozen=True)
 class AppComponents:
-    """The fully wired application: orchestrator plus its session store."""
+    """The fully wired application: orchestrator plus its stores."""
 
     orchestrator: AgentOrchestrator
     session_store: ISessionStore
+    task_store: ITaskStore
 
 
 def _build_middleware() -> ToolPipeline:
@@ -58,6 +61,7 @@ def register_defaults(container: DIContainer, settings: Settings) -> None:
             safety_level=settings.safety_level,
             extra_tools=extra_tools,
             pipeline=_build_middleware(),
+            task_store=c.resolve(ITaskStore),
         ),
     )
 
@@ -71,6 +75,11 @@ def register_defaults(container: DIContainer, settings: Settings) -> None:
     container.register(
         ISessionStore,
         lambda c: SessionStore(session_dir=settings.session_dir),
+    )
+
+    container.register(
+        ITaskStore,
+        lambda c: TaskStore(tasks_file=settings.tasks_file),
     )
 
 
@@ -97,6 +106,7 @@ def create_production_app(settings: Settings | None = None) -> AppComponents:
     return AppComponents(
         orchestrator=orchestrator,
         session_store=container.resolve(ISessionStore),
+        task_store=container.resolve(ITaskStore),
     )
 
 
