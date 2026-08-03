@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from src.interfaces.task_store import ITaskStore
 from src.tools.base import Tool, ToolError
 from src.tools.file_tools import (
     DeleteFileTool,
@@ -18,6 +19,7 @@ from src.tools.file_tools import (
 )
 from src.tools.middleware import ToolPipeline
 from src.tools.shell_tools import RunShellTool
+from src.tools.task_tools import TaskTool
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +39,7 @@ class ToolRegistry:
         safety_level: int = 1,
         extra_tools: list[Tool] | None = None,
         pipeline: ToolPipeline | None = None,
+        task_store: ITaskStore | None = None,
     ) -> None:
         self._tools: dict[str, Tool] = {}
         self._pipeline = pipeline
@@ -52,6 +55,10 @@ class ToolRegistry:
 
         # --- Built-in shell tool ---
         self._register(RunShellTool(work_dir=work_dir, safety_level=safety_level))
+
+        # --- Built-in task tool ---
+        if task_store is not None:
+            self._register(TaskTool(task_store))
 
         # --- Extra (plugin) tools ---
         for t in extra_tools or []:

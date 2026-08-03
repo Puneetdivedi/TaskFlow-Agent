@@ -23,6 +23,14 @@ def _default_session_dir() -> Path:
     return Path.home() / ".taskflow" / "sessions"
 
 
+def _default_tasks_file() -> Path:
+    """Return the tasks file — ``TASKS_FILE`` env override or the default."""
+    configured = os.getenv("TASKS_FILE")
+    if configured:
+        return Path(configured).expanduser()
+    return Path.home() / ".taskflow" / "tasks.json"
+
+
 @dataclass
 class Settings:
     """Immutable-ish settings container.
@@ -44,6 +52,7 @@ class Settings:
     work_dir: Path = field(default_factory=lambda: Path(os.getenv("AGENT_WORK_DIR", ".")).resolve())
     memory_dir: Path = field(default_factory=lambda: Path.home() / ".taskflow" / "memory")
     session_dir: Path = field(default_factory=_default_session_dir)
+    tasks_file: Path = field(default_factory=_default_tasks_file)
 
     # --- Limits ---
     max_tool_calls_per_turn: int = field(
