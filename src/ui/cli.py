@@ -15,7 +15,8 @@ from rich.rule import Rule
 from rich.table import Table
 
 from src.agent.orchestrator import AgentOrchestrator
-from src.interfaces import IMemory, ISessionStore
+from src.interfaces import IMemory, ISessionStore, ITaskStore
+from src.interfaces.task_store import Task
 
 console = Console()
 
@@ -27,6 +28,11 @@ BANNER = """
 """
 
 SESSION_USAGE = "Usage: /session <new|save|load|delete> [name]"
+
+TASK_USAGE = (
+    "Usage: /task <create <title> | list [status] | get <id> | "
+    "update <id> <field=value> ... | complete <id> | delete <id>>"
+)
 
 
 def print_banner() -> None:
@@ -43,6 +49,8 @@ def print_help() -> None:
     table.add_row("/history", "Show conversation history count")
     table.add_row("/session", "Manage sessions: new/save/load/delete")
     table.add_row("/sessions", "List saved sessions")
+    table.add_row("/task", "Manage tasks: create/list/get/update/complete/delete")
+    table.add_row("/tasks", "List all tasks")
     table.add_row("/exit", "Exit the agent")
     console.print(table)
 
@@ -69,6 +77,13 @@ class SessionCommandResult:
     """
 
     session: str | None
+    message: str
+
+
+@dataclass(frozen=True)
+class TaskCommandResult:
+    """Outcome of handling a ``/task`` command."""
+
     message: str
 
 
@@ -170,6 +185,141 @@ def handle_session_command(
     return SessionCommandResult(current, f"Unknown /session command '{sub}'.\n{SESSION_USAGE}")
 
 
+# ---------------------------------------------------------------------------
+# Task commands
+# ---------------------------------------------------------------------------
+def format_task(task: Task) -> str:
+    """Return a human-readable single-task description."""
+    lines = [f"{task.id}: {task.title} [status: {task.status}, priority: {task.priority}]"]
+    if task.description:
+        lines.append(f"  {task.description}")
+    lines.append(f"  created: {task.created_at[:19]}")
+    return "\n".join(lines)
+
+
+def format_task_list(tasks: list[Task]) -> str:
+    """Return a human-readable listing of tasks (newest first)."""
+    if not tasks:
+        return "No tasks."
+    lines = [f"{len(tasks)} task(s):"]
+    for task in tasks:
+        lines.append(
+            f"  [{task.status:<11}] {task.id} {task.title} "
+            f"(priority: {task.priority}, created: {task.created_at[:10]})"
+        )
+    return "\n".join(lines)
+
+
+def _parse_update_tokens(tokens: list[str]) -> dict[str, str] | None:
+    """Parse ``field=value`` tokens, appending bare words to the previous value.
+
+    Returns ``None`` when the token list is malformed (a bare word appears
+    before any ``field=`` assignment).
+    """
+    changes: dict[str, str] = {}
+    last_field: str | None = None
+    for token in tokens:
+        if "=" in token:
+            field, _, value = token.partition("=")
+            changes[field] = value
+            last_field = field
+        elif last_field is not None:
+            changes[last_field] += f" {token}"
+        else:
+            return None
+    return changes
+
+
+def handle_task_command(command: str, store: ITaskStore) -> TaskCommandResult:
+    """Handle a ``/task ...`` command.
+
+    *command* is the text typed after ``/task`` (may be empty). Validation
+    is delegated to the store; ``KeyError``/``ValueError`` messages are
+    surfaced to the user unchanged.
+    """
+    parts = command.strip().split()
+    if not parts or parts[0].lower() in ("help", "usage"):
+        return TaskCommandResult(TASK_USAGE)
+
+    sub = parts[0].lower()
+
+    if sub == "create":
+        title = " ".join(parts[1:]).strip()
+        if not title:
+            return TaskCommandResult(f"Task title required.\n{TASK_USAGE}")
+        try:
+            task = store.create(title)
+        except ValueError as exc:
+            return TaskCommandResult(str(exc))
+        return TaskCommandResult(
+            f"Created task {task.id}: {task.title} "
+            f"(status: {task.status}, priority: {task.priority})"
+        )
+
+    if sub == "list":
+        status = parts[1] if len(parts) > 1 else None
+        try:
+            tasks = store.list(status)
+        except ValueError as exc:
+            return TaskCommandResult(str(exc))
+        return TaskCommandResult(format_task_list(tasks))
+
+    if sub == "get":
+        if len(parts) < 2:
+            return TaskCommandResult(TASK_USAGE)
+        try:
+            task = store.get(parts[1])
+        except KeyError as exc:
+            return TaskCommandResult(str(exc))
+        return TaskCommandResult(format_task(task))
+
+    if sub == "update":
+        if len(parts) < 3:
+            return TaskCommandResult(TASK_USAGE)
+        task_id = parts[1]
+        changes = _parse_update_tokens(parts[2:])
+        if changes is None:
+            return TaskCommandResult(TASK_USAGE)
+        unknown = set(changes) - {"title", "description", "status", "priority"}
+        if unknown:
+            fields = ", ".join(sorted(unknown))
+            return TaskCommandResult(f"Unknown update field(s): {fields}.\n{TASK_USAGE}")
+        try:
+            task = store.update(
+                task_id,
+                title=changes.get("title"),
+                description=changes.get("description"),
+                status=changes.get("status"),
+                priority=changes.get("priority"),
+            )
+        except (KeyError, ValueError) as exc:
+            return TaskCommandResult(str(exc))
+        return TaskCommandResult(
+            f"Updated task {task.id}: {task.title} "
+            f"(status: {task.status}, priority: {task.priority})"
+        )
+
+    if sub == "complete":
+        if len(parts) < 2:
+            return TaskCommandResult(TASK_USAGE)
+        try:
+            task = store.update(parts[1], status="done")
+        except (KeyError, ValueError) as exc:
+            return TaskCommandResult(str(exc))
+        return TaskCommandResult(f"Completed task {task.id}: {task.title}")
+
+    if sub == "delete":
+        if len(parts) < 2:
+            return TaskCommandResult(TASK_USAGE)
+        try:
+            store.delete(parts[1])
+        except KeyError as exc:
+            return TaskCommandResult(str(exc))
+        return TaskCommandResult(f"Deleted task {parts[1]}")
+
+    return TaskCommandResult(f"Unknown /task command '{sub}'.\n{TASK_USAGE}")
+
+
 def _save_session_on_exit(
     store: ISessionStore,
     memory: IMemory,
@@ -182,7 +332,11 @@ def _save_session_on_exit(
 
 
 # ---------------------------------------------------------------------------
-async def run_cli(orchestrator: AgentOrchestrator, session_store: ISessionStore) -> None:
+async def run_cli(
+    orchestrator: AgentOrchestrator,
+    session_store: ISessionStore,
+    task_store: ITaskStore | None = None,
+) -> None:
     """Main interactive loop."""
     print_banner()
     console.print(
@@ -248,6 +402,21 @@ async def run_cli(orchestrator: AgentOrchestrator, session_store: ISessionStore)
             console.print(format_session_list(session_store))
             continue
 
+        if cmd == "/tasks":
+            if task_store is None:
+                console.print("[yellow]Tasks are not available in this build.[/yellow]")
+                continue
+            console.print(format_task_list(task_store.list()))
+            continue
+
+        if cmd == "/task" or cmd.startswith("/task "):
+            if task_store is None:
+                console.print("[yellow]Tasks are not available in this build.[/yellow]")
+                continue
+            task_result = handle_task_command(user_input[len("/task") :], task_store)
+            console.print(task_result.message)
+            continue
+
         if cmd == "/session" or cmd.startswith("/session "):
             result = handle_session_command(
                 user_input[len("/session") :],
@@ -295,7 +464,7 @@ def main() -> None:
 
     app = create_production_app(settings=settings)
 
-    asyncio.run(run_cli(app.orchestrator, app.session_store))
+    asyncio.run(run_cli(app.orchestrator, app.session_store, app.task_store))
 
 
 if __name__ == "__main__":

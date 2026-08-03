@@ -28,6 +28,13 @@ python -m src.main
 | `/session load <name>` | Load a saved session (auto-saves the current one) |
 | `/session delete <name>` | Delete a saved session |
 | `/sessions` | List saved sessions |
+| `/tasks` | List all tasks |
+| `/task create <title>` | Create a new task |
+| `/task list [status]` | List tasks, optionally filtered by status |
+| `/task get <id>` | Show one task's details |
+| `/task update <id> <field=value> ...` | Update a task's title/description/status/priority |
+| `/task complete <id>` | Mark a task as done |
+| `/task delete <id>` | Delete a task |
 | `/exit` | Exit the agent (auto-saves the current session) |
 
 ## Available Tools
@@ -44,6 +51,7 @@ The agent can use these tools to accomplish tasks autonomously:
 | `delete_file` | Delete files or empty directories |
 | `file_index` | Cache and query filesystem layout for quick lookups |
 | `run_shell` | Execute shell commands (safety-restricted) |
+| `tasks` | Manage a persistent task list (create/list/get/update/complete/delete) |
 
 ## Project Structure
 
@@ -59,12 +67,25 @@ src/
 │   ├── base.py            # Tool ABC and ToolError
 │   ├── file_tools.py      # Read, Write, List, Search, Move, Delete, FileIndex
 │   ├── shell_tools.py     # RunShell with safety guards
+│   ├── task_tools.py      # Persistent task-management tool
+│   ├── middleware.py      # Logging/audit tool pipeline
+│   ├── security.py        # Shell command safety checks
 │   └── registry.py        # Central tool registry + dispatch
 ├── memory/
-│   ├── __init__.py        # Exports: ConversationMemory, FileIndex, SessionStore
+│   ├── __init__.py        # Exports: ConversationMemory, FileIndex, SessionStore, TaskStore
 │   ├── conversation.py    # Token-aware conversation history with pruning
 │   ├── file_index.py      # Persistent filesystem index (JSON cache)
-│   └── session_store.py   # Named session persistence (JSON)
+│   ├── session_store.py   # Named session persistence (JSON)
+│   └── task_store.py      # Persistent task list (JSON)
+├── interfaces/
+│   ├── __init__.py        # Exports: all protocols + dataclasses
+│   └── task_store.py      # ITaskStore protocol + Task dataclass
+├── di/
+│   ├── __init__.py
+│   ├── container.py       # Minimal DI container
+│   └── factories.py       # Production wiring + AppComponents
+├── plugins/
+│   └── __init__.py        # Entry-point tool discovery
 └── ui/
     ├── __init__.py         # Exports: cli_main
     └── cli.py              # Rich terminal UI (panels, tables, markdown)
@@ -72,8 +93,10 @@ config/
 ├── __init__.py             # Exports: SETTINGS, Settings
 └── settings.py             # Environment-driven config (API key, model, safety)
 tests/
-├── test_file_tools.py      # Tests for all file tools
-└── test_orchestrator.py    # Tests for registry + orchestrator init
+├── test_cli.py             # Tests for CLI helpers + command handlers
+├── test_task_store.py      # Tests for the persistent task store
+├── test_task_tools.py      # Tests for the tasks tool
+└── ...                     # Plus unit tests for agent, tools, sessions, DI, etc.
 ```
 
 ## Features
@@ -84,6 +107,7 @@ tests/
 - [x] Shell execution tool with safety restrictions
 - [x] Conversation memory with token-aware pruning
 - [x] Persistent named sessions (save/load/resume conversations)
+- [x] Persistent task list (create/list/get/update/complete/delete)
 - [x] API error handling (rate limits, timeouts, server errors)
 - [x] Safety level enforcement
 - [x] Rich CLI interface (colored output, tables, markdown)
@@ -104,6 +128,21 @@ they are safe to use as filenames.
 - `/session delete <name>` — permanently remove a saved session
 - `/sessions` — list all saved sessions
 
+## Tasks
+
+Tasks persist across restarts in a single JSON file. Manage them directly from
+the CLI, or ask the agent to manage them with the `tasks` tool.
+
+- `/tasks` — list all tasks (newest first)
+- `/task create <title>` — create a task
+- `/task list [status]` — list tasks, optionally filtered by status (`todo`, `in_progress`, `done`)
+- `/task get <id>` — show one task's details
+- `/task update <id> <field=value> ...` — update `title`, `description`, `status`, or `priority` (`low`, `medium`, `high`)
+- `/task complete <id>` — mark a task done
+- `/task delete <id>` — remove a task
+
+Tasks are stored as JSON in `~/.taskflow/tasks.json` (override with `TASKS_FILE`).
+
 ## Configuration
 
 Set these in `.env` (copy from `.env.example`):
@@ -115,6 +154,7 @@ Set these in `.env` (copy from `.env.example`):
 | `SAFETY_LEVEL` | `1` | Permission tier (0–3) |
 | `AGENT_WORK_DIR` | `.` | Working directory for the agent |
 | `SESSION_DIR` | `~/.taskflow/sessions` | Where named sessions are stored |
+| `TASKS_FILE` | `~/.taskflow/tasks.json` | Where the task list is stored |
 
 ## Safety
 

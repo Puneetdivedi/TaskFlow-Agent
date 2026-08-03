@@ -8,6 +8,8 @@ from typing import Any
 
 import pytest
 
+from src.memory.task_store import TaskStore
+
 
 # ---------------------------------------------------------------------------
 # Mock doubles reused across test modules
@@ -136,3 +138,9 @@ def sample_messages() -> list[dict]:
         {"role": "user", "content": "List files"},
         {"role": "assistant", "content": "Here are the files: ..."},
     ]
+
+
+@pytest.fixture
+def task_store(tmp_path: Path) -> TaskStore:
+    """A TaskStore backed by a temporary JSON file."""
+    return TaskStore(tasks_file=tmp_path / "tasks.json")
