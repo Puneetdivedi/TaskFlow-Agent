@@ -15,9 +15,10 @@ from src.di.factories import (
     create_production_orchestrator,
     register_defaults,
 )
-from src.interfaces import IMemory, ISessionStore, IToolRegistry, LLMClient
+from src.interfaces import IMemory, ISessionStore, ITaskStore, IToolRegistry, LLMClient
 from src.memory.conversation import ConversationMemory
 from src.memory.session_store import SessionStore
+from src.memory.task_store import TaskStore
 from src.tools.registry import ToolRegistry
 
 
@@ -28,6 +29,7 @@ def test_settings(tmp_path: Path) -> Settings:
         work_dir=tmp_path,
         memory_dir=tmp_path / "memory",
         session_dir=tmp_path / "sessions",
+        tasks_file=tmp_path / "tasks.json",
     )
 
 
@@ -40,6 +42,7 @@ class TestRegisterDefaults:
         assert isinstance(container.resolve(IToolRegistry), ToolRegistry)
         assert isinstance(container.resolve(IMemory), ConversationMemory)
         assert isinstance(container.resolve(ISessionStore), SessionStore)
+        assert isinstance(container.resolve(ITaskStore), TaskStore)
 
     def test_session_store_uses_configured_dir(self, test_settings: Settings) -> None:
         container = DIContainer()
@@ -80,6 +83,11 @@ class TestCreateProductionApp:
         assert isinstance(app.orchestrator, AgentOrchestrator)
         assert isinstance(app.session_store, SessionStore)
         assert app.session_store._dir == test_settings.session_dir
+
+    def test_returns_task_store(self, test_settings: Settings) -> None:
+        app = create_production_app(settings=test_settings)
+        assert isinstance(app.task_store, TaskStore)
+        assert app.task_store._file == test_settings.tasks_file
 
     def test_components_share_no_state(self, test_settings: Settings) -> None:
         app = create_production_app(settings=test_settings)

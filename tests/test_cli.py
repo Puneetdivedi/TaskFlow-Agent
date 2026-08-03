@@ -7,10 +7,14 @@ from pathlib import Path
 import pytest
 
 from src.memory.session_store import SessionStore
+from src.memory.task_store import TaskStore
 from src.ui import cli as cli_module
 from src.ui.cli import (
     format_session_list,
+    format_task,
+    format_task_list,
     handle_session_command,
+    handle_task_command,
     print_banner,
     print_help,
     print_tools,
@@ -203,3 +207,174 @@ class TestRunCLI:
         await cli_module.run_cli(_OrchStub(mock_memory), store)
 
         assert store.exists("demo")
+
+    async def test_task_create_dispatches_through_loop(
+        self, store: SessionStore, mock_memory, task_store: TaskStore, monkeypatch
+    ) -> None:
+        _script_prompt(monkeypatch, ["n", "/task create demo task", "/exit"])
+
+        await cli_module.run_cli(_OrchStub(mock_memory), store, task_store)
+
+        assert len(task_store.list()) == 1
+        assert task_store.list()[0].title == "demo task"
+
+    async def test_tasks_command_dispatches_through_loop(
+        self, store: SessionStore, mock_memory, task_store: TaskStore, monkeypatch
+    ) -> None:
+        task_store.create("existing")
+        _script_prompt(monkeypatch, ["n", "/tasks", "/exit"])
+
+        await cli_module.run_cli(_OrchStub(mock_memory), store, task_store)
+
+        assert len(task_store.list()) == 1  # listing does not mutate
+
+    async def test_tasks_unavailable_without_task_store(
+        self, store: SessionStore, mock_memory, monkeypatch
+    ) -> None:
+        _script_prompt(monkeypatch, ["n", "/tasks", "/exit"])
+
+        await cli_module.run_cli(_OrchStub(mock_memory), store)
+
+        # No exception: the guard must short-circuit before the agent path.
+
+
+class TestTaskCommandHandler:
+    def test_empty_command_shows_usage(self, task_store: TaskStore) -> None:
+        result = handle_task_command("", task_store)
+        assert "Usage" in result.message
+
+    def test_help_shows_usage(self, task_store: TaskStore) -> None:
+        result = handle_task_command("help", task_store)
+        assert "Usage" in result.message
+
+    def test_create_multi_word_title(self, task_store: TaskStore) -> None:
+        result = handle_task_command("create Buy milk", task_store)
+        assert "Created task t1: Buy milk" in result.message
+        assert task_store.get("t1").title == "Buy milk"
+
+    def test_create_requires_title(self, task_store: TaskStore) -> None:
+        result = handle_task_command("create", task_store)
+        assert "Task title required" in result.message
+        assert task_store.list() == []
+
+    def test_create_accepts_priority_via_update_not_create(self, task_store: TaskStore) -> None:
+        # create only takes a title; priority is set via update.
+        result = handle_task_command("create Buy milk", task_store)
+        assert "Created task t1: Buy milk (status: todo, priority: medium)" in result.message
+
+    def test_list_empty(self, task_store: TaskStore) -> None:
+        result = handle_task_command("list", task_store)
+        assert "No tasks." in result.message
+
+    def test_list_returns_tasks(self, task_store: TaskStore) -> None:
+        task_store.create("First")
+        task_store.create("Second")
+        result = handle_task_command("list", task_store)
+        assert "2 task(s):" in result.message
+        assert "First" in result.message
+        assert "Second" in result.message
+
+    def test_list_filters_by_status(self, task_store: TaskStore) -> None:
+        task_store.create("First")
+        task_store.create("Second")
+        handle_task_command("complete t1", task_store)
+        result = handle_task_command("list done", task_store)
+        assert "t1" in result.message
+        assert "t2" not in result.message
+
+    def test_list_invalid_status(self, task_store: TaskStore) -> None:
+        result = handle_task_command("list bogus", task_store)
+        assert "Invalid status" in result.message
+
+    def test_get_returns_task(self, task_store: TaskStore) -> None:
+        task_store.create("Buy milk")
+        result = handle_task_command("get t1", task_store)
+        assert "t1: Buy milk" in result.message
+
+    def test_get_missing(self, task_store: TaskStore) -> None:
+        result = handle_task_command("get t99", task_store)
+        assert "not found" in result.message
+
+    def test_get_without_id(self, task_store: TaskStore) -> None:
+        result = handle_task_command("get", task_store)
+        assert "Usage" in result.message
+
+    def test_update_status(self, task_store: TaskStore) -> None:
+        task_store.create("Buy milk")
+        result = handle_task_command("update t1 status=done", task_store)
+        assert "Updated task t1" in result.message
+        assert task_store.get("t1").status == "done"
+
+    def test_update_multi_word_title(self, task_store: TaskStore) -> None:
+        task_store.create("Buy milk")
+        result = handle_task_command("update t1 title=Bring snacks", task_store)
+        assert "Updated task t1: Bring snacks" in result.message
+        assert task_store.get("t1").title == "Bring snacks"
+
+    def test_update_unknown_field(self, task_store: TaskStore) -> None:
+        task_store.create("Buy milk")
+        result = handle_task_command("update t1 bogus=1", task_store)
+        assert "Unknown update field(s): bogus" in result.message
+        assert task_store.get("t1").title == "Buy milk"
+
+    def test_update_without_assignments(self, task_store: TaskStore) -> None:
+        task_store.create("Buy milk")
+        result = handle_task_command("update t1", task_store)
+        assert "Usage" in result.message
+
+    def test_update_missing(self, task_store: TaskStore) -> None:
+        result = handle_task_command("update t99 status=done", task_store)
+        assert "not found" in result.message
+
+    def test_update_invalid_status(self, task_store: TaskStore) -> None:
+        task_store.create("Buy milk")
+        result = handle_task_command("update t1 status=bogus", task_store)
+        assert "Invalid status" in result.message
+
+    def test_complete_marks_done(self, task_store: TaskStore) -> None:
+        task_store.create("Buy milk")
+        result = handle_task_command("complete t1", task_store)
+        assert "Completed task t1" in result.message
+        assert task_store.get("t1").status == "done"
+
+    def test_complete_missing(self, task_store: TaskStore) -> None:
+        result = handle_task_command("complete t99", task_store)
+        assert "not found" in result.message
+
+    def test_delete_removes_task(self, task_store: TaskStore) -> None:
+        task_store.create("Buy milk")
+        result = handle_task_command("delete t1", task_store)
+        assert "Deleted task t1" in result.message
+        assert task_store.list() == []
+
+    def test_delete_missing(self, task_store: TaskStore) -> None:
+        result = handle_task_command("delete t99", task_store)
+        assert "not found" in result.message
+
+    def test_unknown_subcommand(self, task_store: TaskStore) -> None:
+        result = handle_task_command("frobnicate", task_store)
+        assert "Unknown /task command 'frobnicate'" in result.message
+        assert "Usage" in result.message
+
+
+class TestTaskFormatting:
+    def test_format_task_list_empty(self, task_store: TaskStore) -> None:
+        assert format_task_list(task_store.list()) == "No tasks."
+
+    def test_format_task_list_contains_ids_and_status(self, task_store: TaskStore) -> None:
+        task_store.create("First")
+        task_store.create("Second")
+        handle_task_command("complete t1", task_store)
+        text = format_task_list(task_store.list())
+        assert "t1" in text
+        assert "t2" in text
+        assert "[done" in text
+
+    def test_format_task_shows_fields(self, task_store: TaskStore) -> None:
+        task = task_store.create("Buy milk", description="2L")
+        text = format_task(task)
+        assert "t1: Buy milk" in text
+        assert "status: todo" in text
+        assert "priority: medium" in text
+        assert "created:" in text
+        assert "2L" in text
