@@ -52,6 +52,8 @@ The agent can use these tools to accomplish tasks autonomously:
 | `delete_file` | Delete files or empty directories |
 | `file_index` | Cache and query filesystem layout for quick lookups |
 | `run_shell` | Execute shell commands (safety-restricted) |
+| `web_search` | Search the web via DuckDuckGo; returns numbered titles, URLs, and snippets (no API key) |
+| `web_fetch` | Fetch an http(s) page and return its readable text (scripts/styles/tags stripped) |
 | `tasks` | Manage a persistent task list (create/list/get/update/complete/due/delete, due dates + recurrence) |
 
 ## Project Structure
@@ -69,6 +71,7 @@ src/
 │   ├── file_tools.py      # Read, Write, List, Search, Move, Delete, FileIndex
 │   ├── shell_tools.py     # RunShell with safety guards
 │   ├── task_tools.py      # Persistent task-management tool
+│   ├── web_tools.py       # DuckDuckGo search + page fetch (keyless)
 │   ├── middleware.py      # Logging/audit tool pipeline
 │   ├── security.py        # Shell command safety checks
 │   └── registry.py        # Central tool registry + dispatch
@@ -110,6 +113,7 @@ tests/
 - [x] Persistent named sessions (save/load/resume conversations)
 - [x] Persistent task list (create/list/get/update/complete/delete)
 - [x] Task scheduling (due dates + recurrence) and reminders
+- [x] Web tools (DuckDuckGo search + page fetch — no API key)
 - [x] API error handling (rate limits, timeouts, server errors)
 - [x] Safety level enforcement
 - [x] Rich CLI interface (colored output, tables, markdown)
@@ -166,6 +170,9 @@ Set these in `.env` (copy from `.env.example`):
 | `AGENT_WORK_DIR` | `.` | Working directory for the agent |
 | `SESSION_DIR` | `~/.taskflow/sessions` | Where named sessions are stored |
 | `TASKS_FILE` | `~/.taskflow/tasks.json` | Where the task list is stored |
+
+Web tools (`web_search` / `web_fetch`) are always available and use baked-in
+defaults (15s timeout); no configuration required.
 
 ## Safety
 
