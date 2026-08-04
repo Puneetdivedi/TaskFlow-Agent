@@ -15,6 +15,7 @@ from src.tools.file_tools import (
 from src.tools.registry import ToolRegistry
 from src.tools.shell_tools import RunShellTool
 from src.tools.task_tools import TaskTool
+from src.tools.web_tools import WebFetchTool, WebSearchTool
 
 __all__ = [
     "DeleteFileTool",
@@ -28,5 +29,7 @@ __all__ = [
     "Tool",
     "ToolError",
     "ToolRegistry",
+    "WebFetchTool",
+    "WebSearchTool",
     "WriteFileTool",
 ]

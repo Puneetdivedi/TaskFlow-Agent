@@ -20,6 +20,7 @@ from src.tools.file_tools import (
 from src.tools.middleware import ToolPipeline
 from src.tools.shell_tools import RunShellTool
 from src.tools.task_tools import TaskTool
+from src.tools.web_tools import WebFetchTool, WebSearchTool
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,10 @@ class ToolRegistry:
 
         # --- Built-in shell tool ---
         self._register(RunShellTool(work_dir=work_dir, safety_level=safety_level))
+
+        # --- Built-in web tools (read-only; always available, no safety gating) ---
+        self._register(WebSearchTool())
+        self._register(WebFetchTool())
 
         # --- Built-in task tool ---
         if task_store is not None:
