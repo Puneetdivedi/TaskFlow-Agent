@@ -23,9 +23,11 @@ class TaskTool(Tool):
     def description(self) -> str:
         return (
             "Manage a persistent task list. Actions: 'create' a task (title, plus optional "
-            "description and priority), 'list' tasks (optionally filtered by status), "
-            "'get' one task's details, 'update' a task's title/description/status/priority, "
-            "'complete' a task, or 'delete' a task."
+            "description, priority, due_at, and every_days recurrence), 'list' tasks "
+            "(optionally filtered by status), 'get' one task's details, 'update' a task's "
+            "title/description/status/priority/due_at/every_days, 'complete' a task "
+            "(recurring tasks roll their due date forward), 'due' list tasks due now or "
+            "within ahead_days, or 'delete' a task."
         )
 
     @property
@@ -35,7 +37,7 @@ class TaskTool(Tool):
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["create", "list", "get", "update", "complete", "delete"],
+                    "enum": ["create", "list", "get", "update", "complete", "due", "delete"],
                     "description": "What to do with the task list",
                 },
                 "task_id": {
@@ -54,6 +56,23 @@ class TaskTool(Tool):
                     "enum": list(TASK_STATUSES),
                     "description": "Status filter for 'list', or the new status for 'update'",
                 },
+                "due_at": {
+                    "type": "string",
+                    "description": (
+                        "ISO-8601 due date/time (e.g. '2026-08-10' or '2026-08-10T09:30') "
+                        "— empty string clears it"
+                    ),
+                },
+                "every_days": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Recurrence interval in days (0 = not recurring)",
+                },
+                "ahead_days": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Horizon in days for the 'due' action (default: 0)",
+                },
             },
             "required": ["action"],
         }
@@ -67,6 +86,8 @@ class TaskTool(Tool):
                     kwargs.get("title", ""),
                     kwargs.get("description", ""),
                     kwargs.get("priority", "medium"),
+                    kwargs.get("due_at", ""),
+                    kwargs.get("every_days", 0),
                 )
             except ValueError as exc:
                 raise ToolError(str(exc)) from exc
@@ -92,6 +113,13 @@ class TaskTool(Tool):
         if action == "complete":
             return await asyncio.to_thread(self._complete, kwargs.get("task_id", ""))
 
+        if action == "due":
+            try:
+                tasks = await asyncio.to_thread(self._store.due, int(kwargs.get("ahead_days", 0)))
+            except (TypeError, ValueError) as exc:
+                raise ToolError(str(exc)) from exc
+            return self._format_list(tasks)
+
         if action == "delete":
             return await asyncio.to_thread(self._delete, kwargs.get("task_id", ""))
 
@@ -113,6 +141,8 @@ class TaskTool(Tool):
                 description=changes.get("description"),
                 status=changes.get("status"),
                 priority=changes.get("priority"),
+                due_at=changes.get("due_at"),
+                every_days=changes.get("every_days"),
             )
         except (KeyError, ValueError) as exc:
             raise ToolError(str(exc)) from exc
@@ -123,9 +153,11 @@ class TaskTool(Tool):
 
     def _complete(self, task_id: str) -> str:
         try:
-            task = self._store.update(task_id, status="done")
+            task = self._store.complete(task_id)
         except (KeyError, ValueError) as exc:
             raise ToolError(str(exc)) from exc
+        if task.every_days > 0 and task.due_at:
+            return f"Completed task {task.id}: {task.title} (next due: {task.due_at[:10]})"
         return f"Completed task {task.id}: {task.title}"
 
     def _delete(self, task_id: str) -> str:
@@ -141,6 +173,10 @@ class TaskTool(Tool):
         lines = [f"{task.id}: {task.title} [status: {task.status}, priority: {task.priority}]"]
         if task.description:
             lines.append(f"  {task.description}")
+        if task.due_at:
+            lines.append(f"  due: {task.due_at[:10]}")
+        if task.every_days:
+            lines.append(f"  repeats every {task.every_days} day(s)")
         lines.append(f"  created: {task.created_at[:19]}")
         return "\n".join(lines)
 
@@ -150,8 +186,9 @@ class TaskTool(Tool):
             return "No tasks."
         lines = [f"{len(tasks)} task(s):"]
         for task in tasks:
+            due = f", due: {task.due_at[:10]}" if task.due_at else ""
             lines.append(
                 f"  [{task.status:<11}] {task.id} {task.title} "
-                f"(priority: {task.priority}, created: {task.created_at[:10]})"
+                f"(priority: {task.priority}, created: {task.created_at[:10]}{due})"
             )
         return "\n".join(lines)

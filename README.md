@@ -32,9 +32,10 @@ python -m src.main
 | `/task create <title>` | Create a new task |
 | `/task list [status]` | List tasks, optionally filtered by status |
 | `/task get <id>` | Show one task's details |
-| `/task update <id> <field=value> ...` | Update a task's title/description/status/priority |
-| `/task complete <id>` | Mark a task as done |
+| `/task update <id> <field=value> ...` | Update a task's title/description/status/priority/due_at/every_days |
+| `/task complete <id>` | Mark a task as done (recurring tasks roll to their next due date) |
 | `/task delete <id>` | Delete a task |
+| `/reminders` | Show tasks due or overdue |
 | `/exit` | Exit the agent (auto-saves the current session) |
 
 ## Available Tools
@@ -51,7 +52,7 @@ The agent can use these tools to accomplish tasks autonomously:
 | `delete_file` | Delete files or empty directories |
 | `file_index` | Cache and query filesystem layout for quick lookups |
 | `run_shell` | Execute shell commands (safety-restricted) |
-| `tasks` | Manage a persistent task list (create/list/get/update/complete/delete) |
+| `tasks` | Manage a persistent task list (create/list/get/update/complete/due/delete, due dates + recurrence) |
 
 ## Project Structure
 
@@ -108,6 +109,7 @@ tests/
 - [x] Conversation memory with token-aware pruning
 - [x] Persistent named sessions (save/load/resume conversations)
 - [x] Persistent task list (create/list/get/update/complete/delete)
+- [x] Task scheduling (due dates + recurrence) and reminders
 - [x] API error handling (rate limits, timeouts, server errors)
 - [x] Safety level enforcement
 - [x] Rich CLI interface (colored output, tables, markdown)
@@ -137,9 +139,18 @@ the CLI, or ask the agent to manage them with the `tasks` tool.
 - `/task create <title>` — create a task
 - `/task list [status]` — list tasks, optionally filtered by status (`todo`, `in_progress`, `done`)
 - `/task get <id>` — show one task's details
-- `/task update <id> <field=value> ...` — update `title`, `description`, `status`, or `priority` (`low`, `medium`, `high`)
+- `/task update <id> <field=value> ...` — update `title`, `description`, `status`, `priority` (`low`, `medium`, `high`), `due_at`, or `every_days`
 - `/task complete <id>` — mark a task done
 - `/task delete <id>` — remove a task
+- `/reminders` — show tasks due or overdue
+
+Scheduling:
+
+- `/task update <id> due_at=2026-08-10` — set a due date (ISO-8601; `due_at=` clears it)
+- `/task update <id> every_days=7` — make a task recur every 7 days (`every_days=0` clears)
+- `/task complete <id>` — completing a recurring task rolls its due date forward by `every_days` and keeps it in `todo`; the response shows the next due date
+
+The CLI shows a **Reminders** banner on startup for tasks already due, and ticks after each turn so a task that becomes due mid-session is surfaced without being asked. Recurring tasks re-notify on each new cycle.
 
 Tasks are stored as JSON in `~/.taskflow/tasks.json` (override with `TASKS_FILE`).
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -10,11 +11,13 @@ from src.memory.session_store import SessionStore
 from src.memory.task_store import TaskStore
 from src.ui import cli as cli_module
 from src.ui.cli import (
+    format_reminder_banner,
     format_session_list,
     format_task,
     format_task_list,
     handle_session_command,
     handle_task_command,
+    newly_due_tasks,
     print_banner,
     print_help,
     print_tools,
@@ -237,6 +240,66 @@ class TestRunCLI:
 
         # No exception: the guard must short-circuit before the agent path.
 
+    async def test_reminders_command_dispatches_through_loop(
+        self, store: SessionStore, mock_memory, task_store: TaskStore, monkeypatch
+    ) -> None:
+        due_date = (datetime.now() - timedelta(days=1)).date().isoformat()
+        task_store.create("Overdue", due_at=due_date)
+        _script_prompt(monkeypatch, ["n", "/reminders", "/exit"])
+
+        await cli_module.run_cli(_OrchStub(mock_memory), store, task_store)
+
+        assert task_store.get("t1").status == "todo"  # listing does not mutate
+
+    async def test_reminders_unavailable_without_task_store(
+        self, store: SessionStore, mock_memory, monkeypatch
+    ) -> None:
+        _script_prompt(monkeypatch, ["n", "/reminders", "/exit"])
+
+        await cli_module.run_cli(_OrchStub(mock_memory), store)
+
+        # No exception: the guard must short-circuit before the agent path.
+
+    async def test_task_scheduling_through_loop(
+        self, store: SessionStore, mock_memory, task_store: TaskStore, monkeypatch
+    ) -> None:
+        _script_prompt(
+            monkeypatch,
+            [
+                "n",
+                "/task create Foo",
+                "/task update t1 due_at=2026-08-10 every_days=7",
+                "/exit",
+            ],
+        )
+
+        await cli_module.run_cli(_OrchStub(mock_memory), store, task_store)
+
+        task = task_store.get("t1")
+        assert task.title == "Foo"
+        assert task.due_at == "2026-08-10"
+        assert task.every_days == 7
+
+    async def test_complete_recurring_through_loop(
+        self, store: SessionStore, mock_memory, task_store: TaskStore, monkeypatch
+    ) -> None:
+        _script_prompt(
+            monkeypatch,
+            [
+                "n",
+                "/task create Foo",
+                "/task update t1 due_at=2026-08-10 every_days=7",
+                "/task complete t1",
+                "/exit",
+            ],
+        )
+
+        await cli_module.run_cli(_OrchStub(mock_memory), store, task_store)
+
+        task = task_store.get("t1")
+        assert task.status == "todo"  # rolled, not done
+        assert task.due_at == "2026-08-17"
+
 
 class TestTaskCommandHandler:
     def test_empty_command_shows_usage(self, task_store: TaskStore) -> None:
@@ -341,6 +404,42 @@ class TestTaskCommandHandler:
         result = handle_task_command("complete t99", task_store)
         assert "not found" in result.message
 
+    def test_complete_recurring_reports_next_due(self, task_store: TaskStore) -> None:
+        task_store.create("Water plants", due_at="2026-08-10", every_days=7)
+        result = handle_task_command("complete t1", task_store)
+        assert "(next due: 2026-08-17)" in result.message
+        assert task_store.get("t1").status == "todo"
+
+    def test_update_due_at_field(self, task_store: TaskStore) -> None:
+        task_store.create("Buy milk")
+        result = handle_task_command("update t1 due_at=2026-08-10", task_store)
+        assert "Updated task t1" in result.message
+        assert task_store.get("t1").due_at == "2026-08-10"
+
+    def test_update_every_days_field(self, task_store: TaskStore) -> None:
+        task_store.create("Buy milk")
+        result = handle_task_command("update t1 every_days=7", task_store)
+        assert "Updated task t1" in result.message
+        assert task_store.get("t1").every_days == 7
+
+    def test_update_invalid_every_days(self, task_store: TaskStore) -> None:
+        task_store.create("Buy milk")
+        result = handle_task_command("update t1 every_days=abc", task_store)
+        assert "Invalid every_days" in result.message
+        assert task_store.get("t1").every_days == 0
+
+    def test_update_negative_every_days(self, task_store: TaskStore) -> None:
+        task_store.create("Buy milk")
+        result = handle_task_command("update t1 every_days=-1", task_store)
+        assert "Invalid every_days" in result.message
+        assert task_store.get("t1").every_days == 0
+
+    def test_update_invalid_due_at(self, task_store: TaskStore) -> None:
+        task_store.create("Buy milk")
+        result = handle_task_command("update t1 due_at=bogus", task_store)
+        assert "Invalid due_at" in result.message
+        assert task_store.get("t1").due_at == ""
+
     def test_delete_removes_task(self, task_store: TaskStore) -> None:
         task_store.create("Buy milk")
         result = handle_task_command("delete t1", task_store)
@@ -378,3 +477,55 @@ class TestTaskFormatting:
         assert "priority: medium" in text
         assert "created:" in text
         assert "2L" in text
+
+    def test_format_task_shows_due_and_recurrence(self, task_store: TaskStore) -> None:
+        task = task_store.create("Water plants", due_at="2026-08-10", every_days=7)
+        text = format_task(task)
+        assert "due: 2026-08-10" in text
+        assert "repeats every 7 day(s)" in text
+
+    def test_format_task_list_shows_due(self, task_store: TaskStore) -> None:
+        task_store.create("Water plants", due_at="2026-08-10")
+        text = format_task_list(task_store.list())
+        assert "due: 2026-08-10" in text
+
+
+class TestReminderHelpers:
+    def test_format_reminder_banner_text(self, task_store: TaskStore) -> None:
+        task_store.create("Overdue")
+        text = format_reminder_banner(task_store.list())
+        assert "1 task(s) due or overdue" in text
+        assert "t1" in text
+
+    def test_newly_due_reports_once(self, task_store: TaskStore) -> None:
+        due_date = (datetime.now() - timedelta(days=1)).date().isoformat()
+        task_store.create("Overdue", due_at=due_date)
+        reported: set[tuple[str, str]] = set()
+        fresh = newly_due_tasks(task_store, reported)
+        assert [t.id for t in fresh] == ["t1"]
+        assert len(newly_due_tasks(task_store, reported)) == 0  # reported twice
+
+    def test_newly_due_rerolled_task_reports_again(self, task_store: TaskStore) -> None:
+        # A daily task fallen far behind: completing it rolls the due date by
+        # one day but it is still overdue, so the new (id, due_at) pair —
+        # different from the reported key — surfaces again.
+        due_date = (datetime.now() - timedelta(days=10)).date().isoformat()
+        task_store.create("Water plants", due_at=due_date, every_days=1)
+        reported: set[tuple[str, str]] = set()
+        assert len(newly_due_tasks(task_store, reported)) == 1
+        task_store.complete("t1")
+        fresh = newly_due_tasks(task_store, reported)
+        assert len(fresh) == 1
+        assert fresh[0].due_at != due_date  # new cycle, new key
+
+    def test_newly_due_none_store(self) -> None:
+        assert newly_due_tasks(None, set()) == []
+
+    def test_startup_banner_seeds_reported(self, task_store: TaskStore) -> None:
+        due_date = (datetime.now() - timedelta(days=1)).date().isoformat()
+        task_store.create("Overdue", due_at=due_date)
+        reported: set[tuple[str, str]] = set()
+        startup_due = task_store.due()
+        assert startup_due  # something is due
+        reported.update((t.id, t.due_at) for t in startup_due)
+        assert newly_due_tasks(task_store, reported) == []
