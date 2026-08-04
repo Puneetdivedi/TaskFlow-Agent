@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 import pytest
 
 from src.interfaces.task_store import TASK_PRIORITIES, TASK_STATUSES
@@ -31,6 +33,13 @@ class TestTaskToolContract:
         assert schema["properties"]["priority"]["enum"] == list(TASK_PRIORITIES)
         assert schema["properties"]["status"]["enum"] == list(TASK_STATUSES)
 
+    def test_input_schema_includes_scheduling(self, tool: TaskTool) -> None:
+        schema = tool.input_schema
+        assert "due" in schema["properties"]["action"]["enum"]
+        assert "due_at" in schema["properties"]
+        assert "every_days" in schema["properties"]
+        assert "ahead_days" in schema["properties"]
+
 
 class TestTaskToolCreate:
     async def test_create_creates_task(self, tool: TaskTool, task_store: TaskStore) -> None:
@@ -45,6 +54,20 @@ class TestTaskToolCreate:
     async def test_create_rejects_bad_priority(self, tool: TaskTool) -> None:
         with pytest.raises(ToolError, match="Invalid priority"):
             await tool.run(action="create", title="Task", priority="urgent")
+
+    async def test_create_with_due_at_and_every_days(
+        self, tool: TaskTool, task_store: TaskStore
+    ) -> None:
+        result = await tool.run(
+            action="create", title="Water plants", due_at="2026-08-10", every_days=7
+        )
+        assert "Created task t1" in result
+        assert task_store.get("t1").due_at == "2026-08-10"
+        assert task_store.get("t1").every_days == 7
+
+    async def test_create_rejects_bad_due_at(self, tool: TaskTool) -> None:
+        with pytest.raises(ToolError, match="Invalid due_at"):
+            await tool.run(action="create", title="Task", due_at="bogus")
 
 
 class TestTaskToolList:
@@ -103,6 +126,15 @@ class TestTaskToolUpdate:
         with pytest.raises(ToolError, match="Invalid status"):
             await tool.run(action="update", task_id="t1", status="bogus")
 
+    async def test_update_due_at_and_every_days(
+        self, tool: TaskTool, task_store: TaskStore
+    ) -> None:
+        task_store.create("Task")
+        result = await tool.run(action="update", task_id="t1", due_at="2026-08-10", every_days=7)
+        assert "Updated task t1" in result
+        assert task_store.get("t1").due_at == "2026-08-10"
+        assert task_store.get("t1").every_days == 7
+
 
 class TestTaskToolComplete:
     async def test_complete_marks_done(self, tool: TaskTool, task_store: TaskStore) -> None:
@@ -111,9 +143,37 @@ class TestTaskToolComplete:
         assert result == "Completed task t1: Buy milk"
         assert task_store.get("t1").status == "done"
 
+    async def test_complete_recurring_returns_next_due(
+        self, tool: TaskTool, task_store: TaskStore
+    ) -> None:
+        task_store.create("Water plants", due_at="2026-08-10", every_days=7)
+        result = await tool.run(action="complete", task_id="t1")
+        assert "(next due: 2026-08-17)" in result
+        assert task_store.get("t1").status == "todo"
+        assert task_store.get("t1").due_at == "2026-08-17"
+
     async def test_complete_missing_raises(self, tool: TaskTool) -> None:
         with pytest.raises(ToolError, match="not found"):
             await tool.run(action="complete", task_id="t99")
+
+
+class TestTaskToolDue:
+    async def test_due_empty(self, tool: TaskTool) -> None:
+        assert (await tool.run(action="due")) == "No tasks."
+
+    async def test_due_returns_due_tasks(self, tool: TaskTool, task_store: TaskStore) -> None:
+        due_date = (datetime.now() - timedelta(days=1)).date().isoformat()
+        task_store.create("Overdue", due_at=due_date)
+        result = await tool.run(action="due")
+        assert "t1" in result
+        assert "Overdue" in result
+
+    async def test_due_with_ahead_days(self, tool: TaskTool, task_store: TaskStore) -> None:
+        due_date = (datetime.now() + timedelta(days=3)).date().isoformat()
+        task_store.create("Later", due_at=due_date)
+        assert (await tool.run(action="due")) == "No tasks."
+        result = await tool.run(action="due", ahead_days=7)
+        assert "Later" in result
 
 
 class TestTaskToolDelete:

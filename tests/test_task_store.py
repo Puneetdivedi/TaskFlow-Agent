@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -152,3 +153,169 @@ class TestTaskStore:
         )
         store = TaskStore(tasks_file=path)
         assert store.create("new").id == "t6"
+
+
+class TestTaskScheduling:
+    def test_create_defaults_due_at_and_every_days(self, task_store: TaskStore) -> None:
+        task = task_store.create("Buy milk")
+        assert task.due_at == ""
+        assert task.every_days == 0
+
+    def test_create_accepts_due_at_and_every_days(self, task_store: TaskStore) -> None:
+        task = task_store.create("Water plants", due_at="2026-08-10", every_days=7)
+        assert task.due_at == "2026-08-10"
+        assert task.every_days == 7
+
+    def test_create_rejects_bad_due_at(self, task_store: TaskStore) -> None:
+        with pytest.raises(ValueError, match="Invalid due_at"):
+            task_store.create("Task", due_at="not-a-date")
+
+    def test_create_rejects_timezone_due_at(self, task_store: TaskStore) -> None:
+        with pytest.raises(ValueError, match="timezone"):
+            task_store.create("Task", due_at="2026-08-10T09:00+05:00")
+
+    def test_create_rejects_negative_every_days(self, task_store: TaskStore) -> None:
+        with pytest.raises(ValueError, match="every_days"):
+            task_store.create("Task", every_days=-1)
+
+    def test_create_rejects_bool_every_days(self, task_store: TaskStore) -> None:
+        with pytest.raises(ValueError, match="every_days"):
+            task_store.create("Task", every_days=True)
+
+    def test_update_due_at(self, task_store: TaskStore) -> None:
+        task_store.create("Task")
+        updated = task_store.update("t1", due_at="2026-08-10")
+        assert updated.due_at == "2026-08-10"
+
+    def test_update_every_days(self, task_store: TaskStore) -> None:
+        task_store.create("Task")
+        updated = task_store.update("t1", every_days=7)
+        assert updated.every_days == 7
+
+    def test_update_invalid_due_at_raises(self, task_store: TaskStore) -> None:
+        task_store.create("Task")
+        with pytest.raises(ValueError, match="Invalid due_at"):
+            task_store.update("t1", due_at="bogus")
+
+    def test_update_negative_every_days_raises(self, task_store: TaskStore) -> None:
+        task_store.create("Task")
+        with pytest.raises(ValueError, match="every_days"):
+            task_store.update("t1", every_days=-1)
+
+    def test_update_clears_due_at_with_empty_string(self, task_store: TaskStore) -> None:
+        task_store.create("Task", due_at="2026-08-10")
+        updated = task_store.update("t1", due_at="")
+        assert updated.due_at == ""
+
+    def test_update_clears_recurrence_with_zero(self, task_store: TaskStore) -> None:
+        task_store.create("Task", every_days=7)
+        updated = task_store.update("t1", every_days=0)
+        assert updated.every_days == 0
+
+
+class TestTaskComplete:
+    def test_complete_non_recurring_marks_done(self, task_store: TaskStore) -> None:
+        task_store.create("Buy milk", due_at="2026-08-10")
+        completed = task_store.complete("t1")
+        assert completed.status == "done"
+        assert completed.due_at == "2026-08-10"  # untouched
+
+    def test_complete_recurring_rolls_due_forward(self, task_store: TaskStore) -> None:
+        task_store.create("Water plants", due_at="2026-08-10", every_days=7)
+        completed = task_store.complete("t1")
+        assert completed.status == "todo"
+        assert completed.due_at == "2026-08-17"
+
+    def test_complete_recurring_preserves_time_of_day(self, task_store: TaskStore) -> None:
+        task_store.create("Standup", due_at="2026-08-10T09:30:00", every_days=1)
+        completed = task_store.complete("t1")
+        assert completed.due_at == "2026-08-11T09:30:00"
+
+    def test_complete_recurring_uses_interval(self, task_store: TaskStore) -> None:
+        task_store.create("Task", due_at="2026-08-10", every_days=2)
+        completed = task_store.complete("t1")
+        assert completed.due_at == "2026-08-12"
+
+    def test_complete_recurring_without_due_at_marks_done(self, task_store: TaskStore) -> None:
+        task_store.create("Task", every_days=7)
+        completed = task_store.complete("t1")
+        assert completed.status == "done"
+
+    def test_complete_recurring_persists(self, task_store: TaskStore, tmp_path: Path) -> None:
+        task_store.create("Water plants", due_at="2026-08-10", every_days=7)
+        task_store.complete("t1")
+        reloaded = TaskStore(tasks_file=tmp_path / "tasks.json")
+        assert reloaded.get("t1").status == "todo"
+        assert reloaded.get("t1").due_at == "2026-08-17"
+
+    def test_complete_missing_raises_key_error(self, task_store: TaskStore) -> None:
+        with pytest.raises(KeyError, match="not found"):
+            task_store.complete("t99")
+
+
+class TestTaskDue:
+    @staticmethod
+    def _offset_days(days: int) -> str:
+        return (datetime.now() + timedelta(days=days)).date().isoformat()
+
+    def test_due_empty_store(self, task_store: TaskStore) -> None:
+        assert task_store.due() == []
+
+    def test_due_returns_overdue_and_due_today(self, task_store: TaskStore) -> None:
+        task_store.create("Overdue", due_at=self._offset_days(-1))
+        task_store.create("Today", due_at=self._offset_days(0))
+        assert {t.title for t in task_store.due()} == {"Overdue", "Today"}
+
+    def test_due_excludes_done_tasks(self, task_store: TaskStore) -> None:
+        task_store.create("Done overdue", due_at=self._offset_days(-1))
+        task_store.update("t1", status="done")
+        assert task_store.due() == []
+
+    def test_due_excludes_no_due_at(self, task_store: TaskStore) -> None:
+        task_store.create("No due")
+        assert task_store.due() == []
+
+    def test_due_ahead_days_includes_future(self, task_store: TaskStore) -> None:
+        task_store.create("Later", due_at=self._offset_days(3))
+        assert task_store.due() == []
+        assert [t.id for t in task_store.due(ahead_days=7)] == ["t1"]
+
+    def test_due_sorted_soonest_first(self, task_store: TaskStore) -> None:
+        now = datetime.now()
+        task_store.create("Third", due_at=(now - timedelta(hours=6)).isoformat())
+        task_store.create("First", due_at=(now - timedelta(days=2)).isoformat())
+        task_store.create("Second", due_at=(now - timedelta(days=1)).isoformat())
+        assert [t.title for t in task_store.due()] == ["First", "Second", "Third"]
+
+    def test_due_skips_unparseable_due_at(self, tmp_path: Path) -> None:
+        path = tmp_path / "tasks.json"
+        payload = {
+            "tasks": [
+                {"id": "t1", "title": "bogus", "due_at": "bogus"},
+                {
+                    "id": "t2",
+                    "title": "ok",
+                    "due_at": (datetime.now() - timedelta(days=1)).isoformat(),
+                },
+            ]
+        }
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        store = TaskStore(tasks_file=path)
+        assert [t.id for t in store.due()] == ["t2"]
+
+    def test_due_rejects_negative_ahead_days(self, task_store: TaskStore) -> None:
+        with pytest.raises(ValueError, match="ahead_days"):
+            task_store.due(ahead_days=-1)
+
+
+class TestTaskBackwardCompat:
+    def test_old_json_without_new_fields_loads(self, tmp_path: Path) -> None:
+        path = tmp_path / "tasks.json"
+        path.write_text(
+            json.dumps({"tasks": [{"id": "t1", "title": "x"}]}),
+            encoding="utf-8",
+        )
+        store = TaskStore(tasks_file=path)
+        task = store.get("t1")
+        assert task.due_at == ""
+        assert task.every_days == 0
