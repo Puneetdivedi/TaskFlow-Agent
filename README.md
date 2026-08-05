@@ -186,3 +186,57 @@ TaskFlow uses a tiered permission model, enforced by the shell tool and extensib
 | 3 | **Autonomous** — full autonomy with logging |
 
 Shell commands with known dangerous patterns (`rm -rf /`, `mkfs`, `dd`, `shutdown`, etc.) are blocked at all levels.
+
+## Plugins
+
+Third-party packages can add tools to the agent by registering an entry point
+under the `taskflow.tools` group. Discovery runs once at startup in
+`src/plugins`, and every discovered tool is available to the agent alongside
+the built-ins.
+
+An entry point may resolve to a `Tool` subclass, a `Tool` instance, or a
+zero-argument callable returning one. The result must expose `name`,
+`description`, `input_schema`, and an async `run(**kwargs) -> str` method:
+
+```python
+# my_package/tools.py
+from typing import Any
+
+from src.tools.base import Tool
+
+
+class EchoTool(Tool):
+    """Echoes the given text back — a minimal plugin tool."""
+
+    @property
+    def name(self) -> str:
+        return "echo"
+
+    @property
+    def description(self) -> str:
+        return "Echoes the given text back to the caller."
+
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {"text": {"type": "string", "description": "Text to echo"}},
+            "required": ["text"],
+        }
+
+    async def run(self, **kwargs: Any) -> str:
+        return f"Echo: {kwargs.get('text', '')}"
+```
+
+Register it in your package's `pyproject.toml`:
+
+```toml
+[project.entry-points."taskflow.tools"]
+echo = "my_package.tools:EchoTool"
+```
+
+Contract notes:
+
+- A plugin that fails to load, is not Tool-shaped, or collides with an existing
+  tool name is logged and skipped — one bad plugin never blocks startup.
+- On a name collision, the built-in tool (or the first plugin registered) wins.

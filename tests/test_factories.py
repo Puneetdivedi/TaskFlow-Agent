@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -19,7 +20,27 @@ from src.interfaces import IMemory, ISessionStore, ITaskStore, IToolRegistry, LL
 from src.memory.conversation import ConversationMemory
 from src.memory.session_store import SessionStore
 from src.memory.task_store import TaskStore
+from src.tools.base import Tool
 from src.tools.registry import ToolRegistry
+
+
+class _EchoTool(Tool):
+    """A minimal plugin tool used to verify the discovery wiring."""
+
+    @property
+    def name(self) -> str:
+        return "echo"
+
+    @property
+    def description(self) -> str:
+        return "Echoes the given text back"
+
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        return {"type": "object", "properties": {"text": {"type": "string"}}}
+
+    async def run(self, **kwargs: Any) -> str:
+        return f"Echo: {kwargs.get('text', '')}"
 
 
 @pytest.fixture
@@ -65,6 +86,16 @@ class TestRegisterDefaults:
         register_defaults(container, test_settings)
 
         assert container.resolve(IMemory) is container.resolve(IMemory)
+
+    def test_register_defaults_includes_plugin_tools(
+        self, test_settings: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("src.di.factories.discover_tools", lambda: [_EchoTool()])
+        container = DIContainer()
+        register_defaults(container, test_settings)
+
+        registry: ToolRegistry = container.resolve(IToolRegistry)
+        assert "echo" in registry.tool_names
 
 
 class TestCreateProductionOrchestrator:
