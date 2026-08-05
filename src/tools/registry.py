@@ -67,6 +67,9 @@ class ToolRegistry:
 
         # --- Extra (plugin) tools ---
         for t in extra_tools or []:
+            if t.name in self._tools:
+                logger.warning("Skipping extra tool %r: name already registered", t.name)
+                continue
             self._register(t)
 
         logger.info("ToolRegistry initialised with %d tools", len(self._tools))
