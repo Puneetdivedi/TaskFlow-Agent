@@ -16,6 +16,7 @@ from src.tools.registry import ToolRegistry
 from src.tools.shell_tools import RunShellTool
 from src.tools.task_tools import TaskTool
 from src.tools.web_tools import WebFetchTool, WebSearchTool
+from src.tools.yaml_tools import YamlReadTool, YamlWriteTool
 
 __all__ = [
     "DeleteFileTool",
@@ -32,4 +33,6 @@ __all__ = [
     "WebFetchTool",
     "WebSearchTool",
     "WriteFileTool",
+    "YamlReadTool",
+    "YamlWriteTool",
 ]

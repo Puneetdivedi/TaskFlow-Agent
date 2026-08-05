@@ -21,6 +21,7 @@ from src.tools.middleware import ToolPipeline
 from src.tools.shell_tools import RunShellTool
 from src.tools.task_tools import TaskTool
 from src.tools.web_tools import WebFetchTool, WebSearchTool
+from src.tools.yaml_tools import YamlReadTool, YamlWriteTool
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,10 @@ class ToolRegistry:
         # --- Built-in web tools (read-only; always available, no safety gating) ---
         self._register(WebSearchTool())
         self._register(WebFetchTool())
+
+        # --- Built-in YAML tools (structured config/spec read/write) ---
+        self._register(YamlReadTool())
+        self._register(YamlWriteTool())
 
         # --- Built-in task tool ---
         if task_store is not None:
