@@ -54,6 +54,8 @@ The agent can use these tools to accomplish tasks autonomously:
 | `run_shell` | Execute shell commands (safety-restricted) |
 | `web_search` | Search the web via DuckDuckGo; returns numbered titles, URLs, and snippets (no API key) |
 | `web_fetch` | Fetch an http(s) page and return its readable text (scripts/styles/tags stripped) |
+| `yaml_read` | Read a YAML file and return its contents as normalized, canonical YAML |
+| `yaml_write` | Write structured YAML to a file (parses/normalizes content, creates parent dirs) |
 | `tasks` | Manage a persistent task list (create/list/get/update/complete/due/delete, due dates + recurrence) |
 
 ## Project Structure
@@ -72,6 +74,7 @@ src/
 │   ├── shell_tools.py     # RunShell with safety guards
 │   ├── task_tools.py      # Persistent task-management tool
 │   ├── web_tools.py       # DuckDuckGo search + page fetch (keyless)
+│   ├── yaml_tools.py      # YAML read/write tools
 │   ├── middleware.py      # Logging/audit tool pipeline
 │   ├── security.py        # Shell command safety checks
 │   └── registry.py        # Central tool registry + dispatch
@@ -114,6 +117,7 @@ tests/
 - [x] Persistent task list (create/list/get/update/complete/delete)
 - [x] Task scheduling (due dates + recurrence) and reminders
 - [x] Web tools (DuckDuckGo search + page fetch — no API key)
+- [x] YAML tools (read/write structured YAML files)
 - [x] API error handling (rate limits, timeouts, server errors)
 - [x] Safety level enforcement
 - [x] Rich CLI interface (colored output, tables, markdown)
