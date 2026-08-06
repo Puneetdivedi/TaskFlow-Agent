@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Any, Awaitable, Callable, Protocol, TypeAlias
+
+#: Async callback receiving each chunk of assistant text as it is generated.
+TextDeltaSink: TypeAlias = Callable[[str], Awaitable[None]]
+#: Async callback receiving each tool call (name, arguments) before it runs.
+ToolCallSink: TypeAlias = Callable[[str, dict[str, Any]], Awaitable[None]]
 
 
 class LLMClient(Protocol):
@@ -11,7 +16,8 @@ class LLMClient(Protocol):
     The only method a client must provide is ``send_messages``, which
     accepts the same conversation structure that the orchestrator
     maintains and returns a response with ``content`` and ``stop_reason``
-    attributes.
+    attributes. Clients may additionally implement ``stream_messages`` to
+    deliver text incrementally.
     """
 
     async def send_messages(
@@ -30,5 +36,20 @@ class LLMClient(Protocol):
         Returns:
             A response object with ``.content`` (list of blocks) and
             ``.stop_reason`` (str).
+        """
+        ...
+
+    async def stream_messages(
+        self,
+        messages: list[dict[str, Any]],
+        system: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        *,
+        on_text_delta: TextDeltaSink | None = None,
+    ) -> Any:
+        """Like :meth:`send_messages`, but calls *on_text_delta* with each
+        text chunk as it arrives.
+
+        Returns the same full response object as ``send_messages``.
         """
         ...

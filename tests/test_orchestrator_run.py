@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from src.agent.orchestrator import AgentOrchestrator
 from src.tools.base import ToolError
 
@@ -53,6 +55,55 @@ class _FailingLLM:
         tools: list[dict] | None = None,
     ):
         raise RuntimeError("network down")
+
+
+class _StreamingLLM:
+    """LLMClient stub implementing both send_messages and stream_messages."""
+
+    def __init__(self, responses: list) -> None:
+        self._responses = list(responses)
+        self.send_calls = 0
+        self.stream_calls = 0
+
+    async def send_messages(
+        self,
+        messages: list[dict] | None = None,
+        system: str | None = None,
+        tools: list[dict] | None = None,
+    ):
+        self.send_calls += 1
+        if not self._responses:
+            return _end_turn_response("")
+        return self._responses.pop(0)
+
+    async def stream_messages(
+        self,
+        messages: list[dict] | None = None,
+        system: str | None = None,
+        tools: list[dict] | None = None,
+        *,
+        on_text_delta=None,
+    ):
+        self.stream_calls += 1
+        resp = self._responses.pop(0) if self._responses else _end_turn_response("")
+        for block in resp.content:
+            if block.type == "text" and on_text_delta is not None:
+                await on_text_delta(block.text)
+        return resp
+
+
+class _InterruptingLLM:
+    """LLMClient stub that interrupts mid-stream."""
+
+    async def stream_messages(
+        self,
+        messages: list[dict] | None = None,
+        system: str | None = None,
+        tools: list[dict] | None = None,
+        *,
+        on_text_delta=None,
+    ):
+        raise KeyboardInterrupt
 
 
 # --- response helpers (duck-type Anthropic Message) ---
@@ -170,3 +221,67 @@ class TestMaxToolCalls:
             if isinstance(m.get("content"), list) and m["content"][0].get("type") == "tool_result"
         ]
         assert any("Exceeded max tool calls" in m["content"][0]["content"] for m in tool_msgs)
+
+
+class TestRunStreaming:
+    async def test_streams_deltas_forwarded_to_sink(self, mock_memory, mock_tool_registry) -> None:
+        llm = _StreamingLLM([_end_turn_response("Hello there")])
+        orch = _make_orchestrator(llm, mock_memory, mock_tool_registry)
+        deltas: list[str] = []
+
+        async def sink(delta: str) -> None:
+            deltas.append(delta)
+
+        result = await orch.run("hi", on_text_delta=sink)
+
+        assert result == "Hello there"
+        assert deltas == ["Hello there"]
+        assert llm.stream_calls == 1
+        assert llm.send_calls == 0
+
+    async def test_on_tool_call_invoked_before_dispatch(
+        self, mock_memory, mock_tool_registry
+    ) -> None:
+        llm = _StreamingLLM(
+            [
+                _tool_use_response("read_file", {"path": "a.txt"}, id_="toolu_1"),
+                _end_turn_response("done"),
+            ]
+        )
+        orch = _make_orchestrator(llm, mock_memory, mock_tool_registry)
+        calls: list[tuple[str, dict]] = []
+
+        async def sink(name: str, args: dict) -> None:
+            calls.append((name, args))
+
+        result = await orch.run("read", on_tool_call=sink)
+
+        assert result == "done"
+        assert calls == [("read_file", {"path": "a.txt"})]
+        # the tool still dispatched after the callback
+        assert mock_tool_registry._call_count == 1
+
+    async def test_without_sink_uses_send_messages(self, mock_memory, mock_tool_registry) -> None:
+        llm = _StreamingLLM([_end_turn_response("plain")])
+        orch = _make_orchestrator(llm, mock_memory, mock_tool_registry)
+
+        result = await orch.run("hi")
+
+        assert result == "plain"
+        assert llm.send_calls == 1
+        assert llm.stream_calls == 0
+
+    async def test_keyboard_interrupt_restores_memory(
+        self, mock_memory, mock_tool_registry
+    ) -> None:
+        orch = _make_orchestrator(_InterruptingLLM(), mock_memory, mock_tool_registry)
+        before = list(mock_memory.messages)
+
+        async def _noop(_delta: str) -> None:
+            pass
+
+        with pytest.raises(KeyboardInterrupt):
+            await orch.run("hi", on_text_delta=_noop)
+
+        # the user message added this turn was rolled back
+        assert mock_memory.messages == before

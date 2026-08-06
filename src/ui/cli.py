@@ -6,13 +6,16 @@ import asyncio
 import sys
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
-from rich.console import Console
+from rich.console import Console, Group, RenderableType
+from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.rule import Rule
 from rich.table import Table
+from rich.text import Text
 
 from src.agent.orchestrator import AgentOrchestrator
 from src.interfaces import IMemory, ISessionStore, ITaskStore
@@ -381,6 +384,81 @@ def _save_session_on_exit(
 
 
 # ---------------------------------------------------------------------------
+# Streaming output
+# ---------------------------------------------------------------------------
+def _stream_renderable(text: str, tool_lines: list[str]) -> RenderableType:
+    """Build the live panel: streamed markdown plus dim tool-call lines."""
+    body: RenderableType
+    if text.strip():
+        body = Markdown(text)
+    else:
+        body = Text("")
+    return Group(body, *(Text(f"  🔧 {line}", style="dim") for line in tool_lines))
+
+
+def _stream_tool_label(name: str, args: dict[str, Any]) -> str:
+    """Render a compact tool-call label like ``run_shell(cmd="ls -la")``.
+
+    Argument values are truncated so a long value never blows up the panel.
+    """
+    parts = [f"{k}={_truncate(str(v))}" for k, v in args.items()]
+    return f"{name}({', '.join(parts)})"
+
+
+def _truncate(value: str, limit: int = 80) -> str:
+    """Truncate *value* to *limit* characters, appending an ellipsis."""
+    return value if len(value) <= limit else value[: limit - 1] + "…"
+
+
+def _should_print_final(streamed: str, response: str) -> bool:
+    """Whether the final response must be printed after the streaming panel.
+
+    The answer is already on screen when it was streamed as the tail of the
+    panel; it must be printed when it wasn't — error returns, stop-sequence
+    markers, and max-tool-calls notices are never streamed.
+    """
+    return bool(response.strip()) and not streamed.rstrip().endswith(response.strip())
+
+
+async def _run_streamed_turn(
+    orchestrator: AgentOrchestrator,
+    user_input: str,
+    console: Console,
+) -> tuple[str, str]:
+    """Run one turn while streaming the assistant's text live.
+
+    Returns ``(final_response_text, streamed_text)``. *streamed_text* is
+    what appeared in the live panel; *final_response_text* is whatever
+    ``run`` returned, which may differ (error returns, stop markers).
+    """
+    text_buffer: list[str] = []
+    tool_lines: list[str] = []
+
+    with Live(
+        _stream_renderable("", []),
+        console=console,
+        refresh_per_second=12,
+        vertical_overflow="visible",
+    ) as live:
+
+        async def _on_delta(delta: str) -> None:
+            text_buffer.append(delta)
+            live.update(_stream_renderable("".join(text_buffer), tool_lines))
+
+        async def _on_tool(name: str, args: dict[str, Any]) -> None:
+            tool_lines.append(_stream_tool_label(name, args))
+            live.update(_stream_renderable("".join(text_buffer), tool_lines))
+
+        response = await orchestrator.run(
+            user_input,
+            on_text_delta=_on_delta,
+            on_tool_call=_on_tool,
+        )
+
+    return response, "".join(text_buffer)
+
+
+# ---------------------------------------------------------------------------
 async def run_cli(
     orchestrator: AgentOrchestrator,
     session_store: ISessionStore,
@@ -504,16 +582,18 @@ async def run_cli(
             continue
 
         # --- Normal agent interaction ---
-        with console.status("[bold yellow]Thinking...[/bold yellow]", spinner="dots"):
-            try:
-                response = await orchestrator.run(user_input)
-            except Exception as exc:
-                response = f"⚠️  Error: {exc}"
+        try:
+            response, streamed = await _run_streamed_turn(orchestrator, user_input, console)
+        except KeyboardInterrupt:
+            console.print("\n[bold yellow]Turn aborted.[/bold yellow]")
+            continue
+        except Exception as exc:
+            console.print(f"\n[red]⚠️  Error: {exc}[/red]")
+            continue
 
-        console.print()
         console.print(Rule(style="dim"))
-        console.print(Markdown(response))
-        console.print(Rule(style="dim"))
+        if _should_print_final(streamed, response):
+            console.print(Markdown(response))
         console.print()
 
 

@@ -194,6 +194,7 @@ tests/
 - [x] API error handling (rate limits, timeouts, server errors)
 - [x] Safety level enforcement
 - [x] Rich CLI interface (colored output, tables, markdown)
+- [x] Streaming responses (text streams live in the CLI as the model generates) with a clean Ctrl-C abort
 
 ## Sessions
 
