@@ -54,6 +54,9 @@ class Settings:
     max_history_tokens: int = field(
         default_factory=lambda: int(os.getenv("MAX_HISTORY_TOKENS", "100000"))
     )
+    summary_threshold_tokens: int = field(
+        default_factory=lambda: int(os.getenv("MEMORY_SUMMARY_THRESHOLD", "60000"))
+    )
 
     # --- Logging ---
     log_level: str = field(default_factory=lambda: os.getenv("AGENT_LOG_LEVEL", "INFO").upper())
@@ -81,6 +84,11 @@ def _validate_settings(s: Settings) -> None:
 
     if s.max_history_tokens < 1000:
         raise ValueError(f"MAX_HISTORY_TOKENS must be >= 1000, got {s.max_history_tokens}")
+
+    if s.summary_threshold_tokens < 0:
+        raise ValueError(
+            f"MEMORY_SUMMARY_THRESHOLD must be >= 0 (0 disables), got {s.summary_threshold_tokens}"
+        )
 
     valid_levels = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
     if s.log_level not in valid_levels:

@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from src.interfaces.session_store import SessionInfo
-from src.memory.sqlite_store import SESSIONS_SCHEMA, SQLiteStore
+from src.memory.sqlite_store import MEMORY_SUMMARIES_SCHEMA, SESSIONS_SCHEMA, SQLiteStore
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +26,14 @@ _MAX_NAME_LEN = 64
 
 
 class SessionStore(SQLiteStore):
-    """SQLite-backed store for named conversation sessions."""
+    """SQLite-backed store for named conversation sessions.
 
-    _SCHEMA = SESSIONS_SCHEMA
+    Each session also carries an optional rolling ``summary`` (the semantic
+    memory of older turns) persisted in the ``memory_summaries`` table and
+    restored on load.
+    """
+
+    _SCHEMA = SESSIONS_SCHEMA + MEMORY_SUMMARIES_SCHEMA
 
     def __init__(self, db_path: Path | None = None) -> None:
         super().__init__(db_path)
@@ -46,14 +51,27 @@ class SessionStore(SQLiteStore):
             )
 
     # ------------------------------------------------------------------
-    def save(self, name: str, messages: list[dict[str, Any]]) -> None:
-        """Persist *messages* under the session *name*."""
+    def save(
+        self,
+        name: str,
+        messages: list[dict[str, Any]],
+        summary: str = "",
+    ) -> None:
+        """Persist *messages* (and the rolling *summary*) under *name*.
+
+        Both tables are written in the same transaction, so a session and its
+        summary are always consistent on disk.
+        """
         self._validate_name(name)
         with self._connect() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO sessions (name, saved_at, message_count, messages) "
                 "VALUES (?, ?, ?, ?)",
                 (name, datetime.now().isoformat(), len(messages), json.dumps(messages)),
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO memory_summaries (name, summary) VALUES (?, ?)",
+                (name, summary or ""),
             )
         logger.info("Saved session %r with %d message(s)", name, len(messages))
 
@@ -76,14 +94,24 @@ class SessionStore(SQLiteStore):
             raise ValueError(f"Session {name!r} is corrupted: missing messages list")
         return messages
 
+    def load_summary(self, name: str) -> str:
+        """Return the rolling summary saved for *name* (``""`` if none)."""
+        self._validate_name(name)
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT summary FROM memory_summaries WHERE name = ?", (name,)
+            ).fetchone()
+        return row["summary"] if row is not None else ""
+
     def delete(self, name: str) -> None:
-        """Remove the saved session *name*.
+        """Remove the saved session *name* (and its summary).
 
         Raises ``KeyError`` if the session does not exist.
         """
         self._validate_name(name)
         with self._connect() as conn:
             cursor = conn.execute("DELETE FROM sessions WHERE name = ?", (name,))
+            conn.execute("DELETE FROM memory_summaries WHERE name = ?", (name,))
         if cursor.rowcount == 0:
             raise KeyError(f"Session {name!r} not found")
         logger.info("Deleted session %r", name)

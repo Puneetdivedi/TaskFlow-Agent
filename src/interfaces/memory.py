@@ -13,6 +13,15 @@ class IMemory(Protocol):
         """Return all messages in Anthropic message format."""
         ...
 
+    @property
+    def summary(self) -> str:
+        """Return the rolling summary of older turns (``''`` if none)."""
+        ...
+
+    def set_summary(self, text: str) -> None:
+        """Replace the rolling summary of older turns."""
+        ...
+
     def add_user(self, content: str) -> None:
         """Append a user message."""
         ...

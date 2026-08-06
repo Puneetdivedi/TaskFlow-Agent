@@ -138,9 +138,10 @@ def handle_session_command(
     name = parts[1] if len(parts) > 1 else None
 
     if sub == "new":
-        # Checkpoint the current conversation before switching.
+        # Checkpoint the current conversation (and its rolling summary)
+        # before switching.
         if current is not None and memory.messages:
-            store.save(current, memory.messages)
+            store.save(current, memory.messages, memory.summary)
         session_name = name or _default_session_name()
         if store.exists(session_name):
             return SessionCommandResult(
@@ -153,6 +154,7 @@ def handle_session_command(
         except ValueError as exc:
             return SessionCommandResult(current, str(exc))
         memory.clear()
+        memory.set_summary("")
         return SessionCommandResult(session_name, f"Started new session '{session_name}'.")
 
     if sub == "save":
@@ -160,7 +162,7 @@ def handle_session_command(
             return SessionCommandResult(current, "Nothing to save — conversation is empty.")
         target = name or current or _default_session_name()
         try:
-            store.save(target, memory.messages)
+            store.save(target, memory.messages, memory.summary)
         except ValueError as exc:
             return SessionCommandResult(current, str(exc))
         return SessionCommandResult(
@@ -171,12 +173,13 @@ def handle_session_command(
         if not name:
             return SessionCommandResult(current, SESSION_USAGE)
         if current is not None and memory.messages:
-            store.save(current, memory.messages)
+            store.save(current, memory.messages, memory.summary)
         try:
             messages = store.load(name)
         except KeyError as exc:
             return SessionCommandResult(current, str(exc))
         memory.restore(messages)
+        memory.set_summary(store.load_summary(name))
         return SessionCommandResult(name, f"Loaded session '{name}' ({len(messages)} message(s)).")
 
     if sub == "delete":
@@ -377,9 +380,9 @@ def _save_session_on_exit(
     memory: IMemory,
     current: str | None,
 ) -> None:
-    """Persist the current conversation before the CLI exits."""
+    """Persist the current conversation (and its summary) before the CLI exits."""
     if current is not None and memory.messages:
-        store.save(current, memory.messages)
+        store.save(current, memory.messages, memory.summary)
         console.print(f"[dim]Saved session '{current}' ({len(memory.messages)} message(s)).[/dim]")
 
 
@@ -485,6 +488,7 @@ async def run_cli(
         if answer.strip().lower() in ("y", "yes"):
             messages = session_store.load(latest)
             orchestrator.memory.restore(messages)
+            orchestrator.memory.set_summary(session_store.load_summary(latest))
             current_session = latest
             console.print(f"[green]Resumed session '{latest}'.[/green]")
 

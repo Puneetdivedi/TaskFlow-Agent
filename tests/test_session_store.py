@@ -106,6 +106,28 @@ class TestSessionStore:
         assert bad.load("good") == []
         assert [info.name for info in bad.list()] == ["good"]
 
+    def test_save_summary_roundtrip(self, store: SessionStore) -> None:
+        store.save("work", _sample_messages(), summary="ROLLED UP")
+        assert store.load_summary("work") == "ROLLED UP"
+        assert store.load("work") == _sample_messages()
+
+    def test_load_summary_default_empty(self, store: SessionStore) -> None:
+        store.save("work", _sample_messages())
+        assert store.load_summary("work") == ""
+
+    def test_load_summary_missing_session(self, store: SessionStore) -> None:
+        assert store.load_summary("ghost") == ""
+
+    def test_save_overwrites_summary(self, store: SessionStore) -> None:
+        store.save("work", [], summary="one")
+        store.save("work", [], summary="two")
+        assert store.load_summary("work") == "two"
+
+    def test_delete_removes_summary(self, store: SessionStore) -> None:
+        store.save("work", [], summary="x")
+        store.delete("work")
+        assert store.load_summary("work") == ""
+
     def test_invalid_names_rejected(self, store: SessionStore) -> None:
         for bad in ("", "..", "a/b", ".hidden", "has space", "a" * 65, "a\\b"):
             with pytest.raises(ValueError):

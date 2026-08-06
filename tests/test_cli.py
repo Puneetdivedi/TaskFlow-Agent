@@ -167,6 +167,37 @@ class TestSessionCommandHandler:
         assert "Unknown" in result.message
         assert "Usage" in result.message
 
+    def test_save_persists_summary(self, store: SessionStore, mock_memory) -> None:
+        mock_memory.add_user("hello")
+        mock_memory.set_summary("ROLLED UP")
+        result = handle_session_command("save work", store, mock_memory, None)
+        assert "Saved session 'work'" in result.message
+        assert store.load_summary("work") == "ROLLED UP"
+
+    def test_load_restores_summary(self, store: SessionStore, mock_memory) -> None:
+        store.save("work", [{"role": "user", "content": "hi"}], summary="ROLLED UP")
+        mock_memory.set_summary("")
+        result = handle_session_command("load work", store, mock_memory, None)
+        assert result.session == "work"
+        assert mock_memory.summary == "ROLLED UP"
+
+    def test_new_checkpoint_preserves_summary(self, store: SessionStore, mock_memory) -> None:
+        mock_memory.add_user("hello")
+        mock_memory.set_summary("OLD")
+        result = handle_session_command("new next", store, mock_memory, "prev")
+        assert result.session == "next"
+        assert store.load_summary("prev") == "OLD"
+        # the fresh session starts summary-free
+        assert mock_memory.summary == ""
+
+    def test_load_checkpoint_preserves_summary(self, store: SessionStore, mock_memory) -> None:
+        store.save("work", [])
+        mock_memory.add_user("hi")
+        mock_memory.set_summary("CUR")
+        result = handle_session_command("load work", store, mock_memory, "prev")
+        assert result.session == "work"
+        assert store.load_summary("prev") == "CUR"
+
 
 class TestSessionList:
     def test_empty(self, store: SessionStore) -> None:
