@@ -19,6 +19,7 @@ dependencies = [
     "requests>=2.31",
     "watchdog>=4.0.0",
     "pyyaml>=6.0",
+    "mcp>=1.0.0",
 ]
 
 [project.optional-dependencies]
