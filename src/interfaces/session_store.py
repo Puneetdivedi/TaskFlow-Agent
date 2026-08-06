@@ -22,8 +22,13 @@ class ISessionStore(Protocol):
     survive process restarts.
     """
 
-    def save(self, name: str, messages: list[dict[str, Any]]) -> None:
-        """Persist *messages* under the session *name*."""
+    def save(
+        self,
+        name: str,
+        messages: list[dict[str, Any]],
+        summary: str = "",
+    ) -> None:
+        """Persist *messages* (and the rolling *summary*) under *name*."""
         ...
 
     def load(self, name: str) -> list[dict[str, Any]]:
@@ -31,6 +36,10 @@ class ISessionStore(Protocol):
 
         Raises ``KeyError`` if no such session exists.
         """
+        ...
+
+    def load_summary(self, name: str) -> str:
+        """Return the rolling summary saved for *name* (``""`` if none)."""
         ...
 
     def delete(self, name: str) -> None:

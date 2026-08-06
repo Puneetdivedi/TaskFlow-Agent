@@ -116,3 +116,28 @@ class TestConversationMemory:
         mem.restore(incoming)
         incoming.append({"role": "user", "content": "b"})
         assert len(mem.messages) == 1
+
+
+class TestSummary:
+    def test_defaults_to_empty(self) -> None:
+        assert ConversationMemory().summary == ""
+
+    def test_set_and_get(self) -> None:
+        mem = ConversationMemory()
+        mem.set_summary("User prefers lowercase paths.")
+        assert mem.summary == "User prefers lowercase paths."
+
+    def test_set_empty_clears(self) -> None:
+        mem = ConversationMemory()
+        mem.set_summary("old")
+        mem.set_summary("")
+        assert mem.summary == ""
+        mem.set_summary(None)  # type: ignore[arg-type]
+        assert mem.summary == ""
+
+    def test_restore_does_not_touch_summary(self) -> None:
+        mem = ConversationMemory()
+        mem.add_user("hi")
+        mem.set_summary("kept")
+        mem.restore([{"role": "user", "content": "other"}])
+        assert mem.summary == "kept"

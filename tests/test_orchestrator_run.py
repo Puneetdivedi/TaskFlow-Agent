@@ -17,6 +17,7 @@ class _ScriptedLLM:
         self._responses = list(responses)
         self.sent_message_lists: list[list[dict]] = []
         self.received_tool_defs: list[list[dict] | None] = []
+        self.received_systems: list[str | list[dict]] = []
 
     async def send_messages(
         self,
@@ -26,6 +27,7 @@ class _ScriptedLLM:
     ):
         self.sent_message_lists.append(list(messages or []))
         self.received_tool_defs.append(tools)
+        self.received_systems.append(system)  # type: ignore[arg-type]
         if not self._responses:
             return _end_turn_response("")
         return self._responses.pop(0)
@@ -123,6 +125,30 @@ def _make_orchestrator(llm, memory, tools) -> AgentOrchestrator:
         tools=tools,
         memory=memory,
     )
+
+
+class _ScriptedSummarizer:
+    """ConversationSummarizer stand-in — returns canned text or raises."""
+
+    def __init__(self, text: str = "ROLLED UP", *, raises: bool = False) -> None:
+        self.text = text
+        self.raises = raises
+        self.calls: list[tuple[str, str | None]] = []
+
+    async def summarize(self, turn_text: str, existing: str | None = None) -> str:
+        self.calls.append((turn_text, existing))
+        if self.raises:
+            raise RuntimeError("summarizer down")
+        return self.text
+
+
+def _long_conversation(exchanges: int = 30) -> list[dict]:
+    """A long plain conversation (~3k estimated tokens) for compaction tests."""
+    messages: list[dict] = []
+    for i in range(exchanges):
+        messages.append({"role": "user", "content": f"u{i}" + "x" * 200})
+        messages.append({"role": "assistant", "content": f"a{i}" + "y" * 200})
+    return messages
 
 
 class TestRunEndToEnd:
@@ -285,3 +311,83 @@ class TestRunStreaming:
 
         # the user message added this turn was rolled back
         assert mock_memory.messages == before
+
+
+class TestSemanticMemory:
+    async def test_consolidates_long_conversation(self, mock_memory, mock_tool_registry) -> None:
+        long_conv = _long_conversation()
+        mock_memory.restore(long_conv)
+        summarizer = _ScriptedSummarizer(text="ROLLED UP")
+        llm = _ScriptedLLM([_end_turn_response("done")])
+        orch = AgentOrchestrator(
+            llm_client=llm,
+            tools=mock_tool_registry,
+            memory=mock_memory,
+            summarizer=summarizer,
+            summary_threshold_tokens=1000,
+        )
+
+        result = await orch.run("continue")
+
+        assert result == "done"
+        assert mock_memory.summary == "ROLLED UP"
+        # old turns were compacted away, but recent turns stay inline
+        assert len(mock_memory.messages) < len(long_conv) + 1
+        # the summary block was injected as the first system block
+        injected = llm.received_systems[0]
+        assert isinstance(injected, list)
+        assert "[Summary of earlier conversation]" in injected[0]["text"]
+        assert "ROLLED UP" in injected[0]["text"]
+        assert injected[1]["text"]  # base prompt present
+
+    async def test_no_summarizer_uses_plain_system(self, mock_memory, mock_tool_registry) -> None:
+        llm = _ScriptedLLM([_end_turn_response("ok")])
+        orch = _make_orchestrator(llm, mock_memory, mock_tool_registry)
+
+        result = await orch.run("hi")
+
+        assert result == "ok"
+        assert mock_memory.summary == ""
+        assert isinstance(llm.received_systems[0], str)
+
+    async def test_threshold_zero_disables_consolidation(
+        self, mock_memory, mock_tool_registry
+    ) -> None:
+        long_conv = _long_conversation()
+        mock_memory.restore(long_conv)
+        summarizer = _ScriptedSummarizer()
+        llm = _ScriptedLLM([_end_turn_response("ok")])
+        orch = AgentOrchestrator(
+            llm_client=llm,
+            tools=mock_tool_registry,
+            memory=mock_memory,
+            summarizer=summarizer,
+            summary_threshold_tokens=0,
+        )
+
+        result = await orch.run("hi")
+
+        assert result == "ok"
+        assert summarizer.calls == []
+        assert mock_memory.summary == ""
+        assert len(mock_memory.messages) == len(long_conv) + 2  # user + assistant
+
+    async def test_summarizer_failure_keeps_history(self, mock_memory, mock_tool_registry) -> None:
+        long_conv = _long_conversation()
+        mock_memory.restore(long_conv)
+        summarizer = _ScriptedSummarizer(raises=True)
+        llm = _ScriptedLLM([_end_turn_response("done")])
+        orch = AgentOrchestrator(
+            llm_client=llm,
+            tools=mock_tool_registry,
+            memory=mock_memory,
+            summarizer=summarizer,
+            summary_threshold_tokens=1000,
+        )
+
+        result = await orch.run("continue")
+
+        # a failed summary never breaks the turn or mutates memory
+        assert result == "done"
+        assert mock_memory.summary == ""
+        assert len(mock_memory.messages) == len(long_conv) + 2  # user + assistant

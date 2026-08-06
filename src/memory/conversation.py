@@ -5,15 +5,23 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from src.memory.tokens import estimate_tokens
+
 logger = logging.getLogger(__name__)
 
 
 class ConversationMemory:
-    """In-memory conversation history with token-aware pruning."""
+    """In-memory conversation history with token-aware pruning.
+
+    Also tracks a rolling ``summary`` of older turns (see
+    :mod:`src.memory.summary`) that survives compaction and can be persisted
+    per session.
+    """
 
     def __init__(self, max_tokens: int = 100_000) -> None:
         self._messages: list[dict[str, Any]] = []
         self._max_tokens = max_tokens
+        self._summary = ""
 
     # ------------------------------------------------------------------
     @property
@@ -23,6 +31,15 @@ class ConversationMemory:
     @property
     def is_empty(self) -> bool:
         return len(self._messages) == 0
+
+    @property
+    def summary(self) -> str:
+        """Return the rolling summary of older turns ('' if none)."""
+        return self._summary
+
+    def set_summary(self, text: str) -> None:
+        """Replace the rolling summary."""
+        self._summary = text or ""
 
     # ------------------------------------------------------------------
     def add_user(self, content: str) -> None:
@@ -51,7 +68,7 @@ class ConversationMemory:
     # ------------------------------------------------------------------
     def _estimate_tokens(self, text: str) -> int:
         """Rough token estimate (~4 chars per token for English text)."""
-        return len(text) // 4
+        return estimate_tokens(text)
 
     def prune(self) -> None:
         """Drop oldest user/assistant pairs while staying under the token limit.

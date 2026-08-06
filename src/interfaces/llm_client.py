@@ -8,6 +8,10 @@ from typing import Any, Awaitable, Callable, Protocol, TypeAlias
 TextDeltaSink: TypeAlias = Callable[[str], Awaitable[None]]
 #: Async callback receiving each tool call (name, arguments) before it runs.
 ToolCallSink: TypeAlias = Callable[[str, dict[str, Any]], Awaitable[None]]
+#: The ``system`` argument: a plain prompt string or a list of text blocks
+#: (used by the orchestrator to inject a rolling conversation summary ahead of
+#: the base prompt).
+SystemParam: TypeAlias = str | list[dict[str, str]] | None
 
 
 class LLMClient(Protocol):
@@ -23,14 +27,14 @@ class LLMClient(Protocol):
     async def send_messages(
         self,
         messages: list[dict[str, Any]],
-        system: str | None = None,
+        system: SystemParam = None,
         tools: list[dict[str, Any]] | None = None,
     ) -> Any:
         """Send a message list to the LLM and return the response.
 
         Args:
             messages: Conversation history in the Anthropic message format.
-            system: Optional system prompt.
+            system: Optional system prompt (string or text-block list).
             tools: Optional list of tool definitions in Anthropic format.
 
         Returns:
@@ -42,7 +46,7 @@ class LLMClient(Protocol):
     async def stream_messages(
         self,
         messages: list[dict[str, Any]],
-        system: str | None = None,
+        system: SystemParam = None,
         tools: list[dict[str, Any]] | None = None,
         *,
         on_text_delta: TextDeltaSink | None = None,

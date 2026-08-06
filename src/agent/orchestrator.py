@@ -12,6 +12,12 @@ from src.interfaces import (
     TextDeltaSink,
     ToolCallSink,
 )
+from src.memory.summary import (
+    ConversationSummarizer,
+    format_turns,
+    plan_consolidation,
+)
+from src.memory.tokens import estimate_tokens
 from src.tools.base import ToolError
 
 logger = logging.getLogger(__name__)
@@ -57,12 +63,16 @@ class AgentOrchestrator:
         memory: IMemory,
         system_prompt: str | None = None,
         max_tool_calls: int = 25,
+        summarizer: ConversationSummarizer | None = None,
+        summary_threshold_tokens: int = 0,
     ) -> None:
         self._client = llm_client
         self._tools = tools
         self._memory = memory
         self._system_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
         self._max_tool_calls = max_tool_calls
+        self._summarizer = summarizer
+        self._summary_threshold_tokens = summary_threshold_tokens
 
     # ------------------------------------------------------------------
     @property
@@ -72,6 +82,66 @@ class AgentOrchestrator:
     @property
     def memory(self) -> IMemory:
         return self._memory
+
+    # ------------------------------------------------------------------
+    def _system_blocks(self) -> str | list[dict[str, str]]:
+        """Return the ``system`` argument for LLM calls.
+
+        A plain string (the base prompt) when there is no rolling summary;
+        otherwise a block list that injects the summary ahead of the base
+        prompt, e.g.::
+
+            [{"type": "text", "text": "[Summary of earlier conversation]\\n..."},
+             {"type": "text", "text": "<base prompt>"}]
+
+        The Anthropic API accepts both forms.
+        """
+        if not self._memory.summary:
+            return self._system_prompt
+        return [
+            {
+                "type": "text",
+                "text": f"[Summary of earlier conversation]\n{self._memory.summary}",
+            },
+            {"type": "text", "text": self._system_prompt},
+        ]
+
+    async def _maybe_consolidate(self) -> None:
+        """Condense old turns into a rolling summary once the conversation
+        grows past ``summary_threshold_tokens``.
+
+        Summarizes the older prefix (chosen so no exchange is split), drops it
+        from memory, and stores the result on ``IMemory.summary`` so it is
+        injected as a system block on subsequent calls. A failed summary is
+        logged and ignored — memory is left untouched and the turn proceeds
+        with the full history.
+        """
+        if self._summarizer is None or self._summary_threshold_tokens <= 0:
+            return
+        messages = self._memory.messages
+        if estimate_tokens(str(messages)) <= self._summary_threshold_tokens:
+            return
+
+        keep_recent_tokens = max(2000, self._summary_threshold_tokens // 2)
+        to_summarize, keep = plan_consolidation(messages, keep_recent_tokens=keep_recent_tokens)
+        if not to_summarize:
+            return
+
+        try:
+            new_summary = await self._summarizer.summarize(
+                format_turns(to_summarize), existing=self._memory.summary
+            )
+        except Exception as exc:  # noqa: BLE001 — never let a failed summary break the turn
+            logger.warning("Semantic-memory consolidation skipped: %s", exc)
+            return
+
+        self._memory.restore(keep)
+        self._memory.set_summary(new_summary)
+        logger.info(
+            "Consolidated %d old message(s) into a summary (%d kept)",
+            len(to_summarize),
+            len(keep),
+        )
 
     # ------------------------------------------------------------------
     async def run(
@@ -93,6 +163,11 @@ class AgentOrchestrator:
 
         Returns the final assistant response string.
         """
+        # Compact long conversations into a rolling summary before recording
+        # this turn. The snapshot below is taken *after* consolidation so a
+        # KeyboardInterrupt rollback keeps the (legitimate) memory compaction.
+        await self._maybe_consolidate()
+
         # Snapshot before recording the user message so an aborted turn rolls
         # back completely (the user input included), leaving the conversation
         # exactly as it was before the turn started.
@@ -109,14 +184,14 @@ class AgentOrchestrator:
                     if on_text_delta is not None:
                         response = await self._client.stream_messages(
                             messages=self._memory.messages,
-                            system=self._system_prompt,
+                            system=self._system_blocks(),
                             tools=self._tools.anthropic_tool_defs(),
                             on_text_delta=on_text_delta,
                         )
                     else:
                         response = await self._client.send_messages(
                             messages=self._memory.messages,
-                            system=self._system_prompt,
+                            system=self._system_blocks(),
                             tools=self._tools.anthropic_tool_defs(),
                         )
                 except Exception as exc:  # broad catch — interface impls may raise different errors

@@ -15,7 +15,7 @@ from anthropic import (
     RateLimitError,
 )
 
-from src.interfaces.llm_client import TextDeltaSink
+from src.interfaces.llm_client import SystemParam, TextDeltaSink
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ class ClaudeClient:
     async def send_messages(
         self,
         messages: list[dict[str, Any]],
-        system: str | None = None,
+        system: SystemParam = None,
         tools: list[dict[str, Any]] | None = None,
     ) -> Any:
         """Send a message list to Claude and return *the raw response object*.
@@ -78,7 +78,7 @@ class ClaudeClient:
     async def stream_messages(
         self,
         messages: list[dict[str, Any]],
-        system: str | None = None,
+        system: SystemParam = None,
         tools: list[dict[str, Any]] | None = None,
         *,
         on_text_delta: TextDeltaSink | None = None,

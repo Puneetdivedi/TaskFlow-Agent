@@ -195,6 +195,7 @@ tests/
 - [x] Safety level enforcement
 - [x] Rich CLI interface (colored output, tables, markdown)
 - [x] Streaming responses (text streams live in the CLI as the model generates) with a clean Ctrl-C abort
+- [x] Semantic memory (old turns condensed into a rolling summary, injected as context, persisted per session)
 
 ## Sessions
 
@@ -211,6 +212,22 @@ Sessions are stored in the shared SQLite database at `~/.taskflow/taskflow.db`
 - `/session load <name>` — open a saved session (current one is saved first)
 - `/session delete <name>` — permanently remove a saved session
 - `/sessions` — list all saved sessions
+
+## Semantic Memory
+
+Long conversations are compacted instead of silently forgotten. Once a
+conversation's estimated token count passes `MEMORY_SUMMARY_THRESHOLD`
+(default `60000`), the agent condenses the older turns into a **rolling
+summary** — names, dates, decisions, preferences, file paths, and numbers —
+injects it back into the model's context as an extra system block, and drops
+the summarized turns from the live history. Recent context always stays
+inline, and an exchange is never split mid-way (tool results stay with the
+assistant turn that produced them).
+
+The summary survives session save/load and CLI restarts: `/session save`
+persists it, `/session load` and the resume prompt restore it. Summarization
+is off when no summarizer is wired or when the threshold is `0` — set
+`MEMORY_SUMMARY_THRESHOLD=0` to disable.
 
 ## Tasks
 

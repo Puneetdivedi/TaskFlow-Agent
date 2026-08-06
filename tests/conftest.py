@@ -50,6 +50,14 @@ class MockMemory:
     def __init__(self) -> None:
         self.messages: list[dict] = []
         self.history: list[tuple[str, str | list[dict]]] = []
+        self._summary = ""
+
+    @property
+    def summary(self) -> str:
+        return self._summary
+
+    def set_summary(self, text: str) -> None:
+        self._summary = text or ""
 
     def add_user(self, content: str) -> None:
         self.messages.append({"role": "user", "content": content})

@@ -20,6 +20,7 @@ from src.memory.conversation import ConversationMemory
 from src.memory.migration import migrate_legacy_data
 from src.memory.session_store import SessionStore
 from src.memory.sqlite_store import DEFAULT_DB_PATH
+from src.memory.summary import ConversationSummarizer
 from src.memory.task_store import TaskStore
 from src.plugins import discover_tools
 from src.tools.middleware import AuditMiddleware, LoggingMiddleware, ToolPipeline
@@ -107,11 +108,14 @@ def create_production_app(settings: Settings | None = None) -> AppComponents:
     container = DIContainer()
     register_defaults(container, settings)
 
+    summarizer = ConversationSummarizer(client=container.resolve(LLMClient))
     orchestrator = AgentOrchestrator(
         llm_client=container.resolve(LLMClient),
         tools=container.resolve(IToolRegistry),
         memory=container.resolve(IMemory),
         max_tool_calls=settings.max_tool_calls_per_turn,
+        summarizer=summarizer,
+        summary_threshold_tokens=settings.summary_threshold_tokens,
     )
     return AppComponents(
         orchestrator=orchestrator,
