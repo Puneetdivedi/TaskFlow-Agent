@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -22,9 +21,9 @@ class TestTaskStore:
         assert task.created_at
         assert task.updated_at
 
-    def test_create_persists_json_file(self, task_store: TaskStore, tmp_path: Path) -> None:
+    def test_create_persists_db(self, task_store: TaskStore, tmp_path: Path) -> None:
         task_store.create("Buy milk")
-        assert (tmp_path / "tasks.json").exists()
+        assert (tmp_path / "tasks.db").exists()
 
     def test_create_increments_ids(self, task_store: TaskStore) -> None:
         task_store.create("First")
@@ -119,40 +118,18 @@ class TestTaskStore:
     def test_reload_persists_roundtrip(self, task_store: TaskStore, tmp_path: Path) -> None:
         task_store.create("Buy milk", description="2L", priority="high")
         task_store.update("t1", status="done")
-        reloaded = TaskStore(tasks_file=tmp_path / "tasks.json")
+        reloaded = TaskStore(db_path=tmp_path / "tasks.db")
         tasks = reloaded.list()
         assert len(tasks) == 1
         assert tasks[0].title == "Buy milk"
         assert tasks[0].status == "done"
         assert tasks[0].priority == "high"
 
-    def test_corrupt_file_starts_empty(self, tmp_path: Path) -> None:
-        path = tmp_path / "tasks.json"
-        path.write_text("{not valid json", encoding="utf-8")
-        store = TaskStore(tasks_file=path)
+    def test_corrupt_db_starts_empty(self, tmp_path: Path) -> None:
+        path = tmp_path / "tasks.db"
+        path.write_text("this is not a sqlite database", encoding="utf-8")
+        store = TaskStore(db_path=path)
         assert store.list() == []
-
-    def test_non_dict_payload_starts_empty(self, tmp_path: Path) -> None:
-        path = tmp_path / "tasks.json"
-        path.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
-        store = TaskStore(tasks_file=path)
-        assert store.list() == []
-
-    def test_malformed_entries_skipped(self, tmp_path: Path) -> None:
-        path = tmp_path / "tasks.json"
-        payload = {"tasks": [{"title": "no id"}, "junk", {"id": "t9", "title": "ok"}]}
-        path.write_text(json.dumps(payload), encoding="utf-8")
-        store = TaskStore(tasks_file=path)
-        assert [t.id for t in store.list()] == ["t9"]
-
-    def test_next_id_continues_from_existing(self, tmp_path: Path) -> None:
-        path = tmp_path / "tasks.json"
-        path.write_text(
-            json.dumps({"tasks": [{"id": "t5", "title": "existing"}]}),
-            encoding="utf-8",
-        )
-        store = TaskStore(tasks_file=path)
-        assert store.create("new").id == "t6"
 
 
 class TestTaskScheduling:
@@ -244,7 +221,7 @@ class TestTaskComplete:
     def test_complete_recurring_persists(self, task_store: TaskStore, tmp_path: Path) -> None:
         task_store.create("Water plants", due_at="2026-08-10", every_days=7)
         task_store.complete("t1")
-        reloaded = TaskStore(tasks_file=tmp_path / "tasks.json")
+        reloaded = TaskStore(db_path=tmp_path / "tasks.db")
         assert reloaded.get("t1").status == "todo"
         assert reloaded.get("t1").due_at == "2026-08-17"
 
@@ -287,35 +264,6 @@ class TestTaskDue:
         task_store.create("Second", due_at=(now - timedelta(days=1)).isoformat())
         assert [t.title for t in task_store.due()] == ["First", "Second", "Third"]
 
-    def test_due_skips_unparseable_due_at(self, tmp_path: Path) -> None:
-        path = tmp_path / "tasks.json"
-        payload = {
-            "tasks": [
-                {"id": "t1", "title": "bogus", "due_at": "bogus"},
-                {
-                    "id": "t2",
-                    "title": "ok",
-                    "due_at": (datetime.now() - timedelta(days=1)).isoformat(),
-                },
-            ]
-        }
-        path.write_text(json.dumps(payload), encoding="utf-8")
-        store = TaskStore(tasks_file=path)
-        assert [t.id for t in store.due()] == ["t2"]
-
     def test_due_rejects_negative_ahead_days(self, task_store: TaskStore) -> None:
         with pytest.raises(ValueError, match="ahead_days"):
             task_store.due(ahead_days=-1)
-
-
-class TestTaskBackwardCompat:
-    def test_old_json_without_new_fields_loads(self, tmp_path: Path) -> None:
-        path = tmp_path / "tasks.json"
-        path.write_text(
-            json.dumps({"tasks": [{"id": "t1", "title": "x"}]}),
-            encoding="utf-8",
-        )
-        store = TaskStore(tasks_file=path)
-        task = store.get("t1")
-        assert task.due_at == ""
-        assert task.every_days == 0

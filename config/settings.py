@@ -14,21 +14,15 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from src.memory.sqlite_store import DEFAULT_DB_PATH
 
-def _default_session_dir() -> Path:
-    """Return the session directory — ``SESSION_DIR`` env override or the default."""
-    configured = os.getenv("SESSION_DIR")
+
+def _default_db_path() -> Path:
+    """Return the shared database path — ``TASKFLOW_DB`` env override or the default."""
+    configured = os.getenv("TASKFLOW_DB")
     if configured:
         return Path(configured).expanduser()
-    return Path.home() / ".taskflow" / "sessions"
-
-
-def _default_tasks_file() -> Path:
-    """Return the tasks file — ``TASKS_FILE`` env override or the default."""
-    configured = os.getenv("TASKS_FILE")
-    if configured:
-        return Path(configured).expanduser()
-    return Path.home() / ".taskflow" / "tasks.json"
+    return DEFAULT_DB_PATH
 
 
 @dataclass
@@ -51,8 +45,7 @@ class Settings:
     # --- Paths ---
     work_dir: Path = field(default_factory=lambda: Path(os.getenv("AGENT_WORK_DIR", ".")).resolve())
     memory_dir: Path = field(default_factory=lambda: Path.home() / ".taskflow" / "memory")
-    session_dir: Path = field(default_factory=_default_session_dir)
-    tasks_file: Path = field(default_factory=_default_tasks_file)
+    db_path: Path = field(default_factory=_default_db_path)
 
     # --- Limits ---
     max_tool_calls_per_turn: int = field(
@@ -71,7 +64,7 @@ class Settings:
         _validate_settings(self)
 
         self.memory_dir.mkdir(parents=True, exist_ok=True)
-        self.session_dir.mkdir(parents=True, exist_ok=True)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
     @property
     def is_ready(self) -> bool:

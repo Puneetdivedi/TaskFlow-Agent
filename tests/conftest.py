@@ -142,5 +142,5 @@ def sample_messages() -> list[dict]:
 
 @pytest.fixture
 def task_store(tmp_path: Path) -> TaskStore:
-    """A TaskStore backed by a temporary JSON file."""
-    return TaskStore(tasks_file=tmp_path / "tasks.json")
+    """A TaskStore backed by a temporary SQLite database."""
+    return TaskStore(db_path=tmp_path / "tasks.db")

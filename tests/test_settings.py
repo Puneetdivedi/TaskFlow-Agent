@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from config.settings import Settings
+from src.memory.sqlite_store import DEFAULT_DB_PATH
 
 
 class TestSettings:
@@ -70,13 +71,20 @@ class TestSettings:
         assert mem_dir.exists()
         assert mem_dir.is_dir()
 
-    def test_session_dir_defaults_to_taskflow_sessions(self) -> None:
-        s = Settings(session_dir=Path.home() / ".taskflow" / "sessions")
-        assert s.session_dir == Path.home() / ".taskflow" / "sessions"
+    def test_db_path_defaults_to_taskflow_db(self) -> None:
+        s = Settings()
+        assert s.db_path == DEFAULT_DB_PATH
 
-    def test_session_dir_created(self, tmp_path: Path) -> None:
-        """session_dir should be created in __post_init__."""
-        sess_dir = tmp_path / ".taskflow" / "sessions"
-        Settings(session_dir=sess_dir)
-        assert sess_dir.exists()
-        assert sess_dir.is_dir()
+    def test_db_path_honors_env_override(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        custom = tmp_path / "custom" / "taskflow.db"
+        monkeypatch.setenv("TASKFLOW_DB", str(custom))
+        assert Settings().db_path == custom
+
+    def test_db_path_parent_created(self, tmp_path: Path) -> None:
+        """The db directory should be created in __post_init__."""
+        db_path = tmp_path / ".taskflow" / "taskflow.db"
+        Settings(db_path=db_path)
+        assert db_path.parent.exists()
+        assert db_path.parent.is_dir()

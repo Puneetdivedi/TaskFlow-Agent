@@ -49,8 +49,7 @@ def test_settings(tmp_path: Path) -> Settings:
         anthropic_api_key="test-key",
         work_dir=tmp_path,
         memory_dir=tmp_path / "memory",
-        session_dir=tmp_path / "sessions",
-        tasks_file=tmp_path / "tasks.json",
+        db_path=tmp_path / "taskflow.db",
     )
 
 
@@ -65,12 +64,12 @@ class TestRegisterDefaults:
         assert isinstance(container.resolve(ISessionStore), SessionStore)
         assert isinstance(container.resolve(ITaskStore), TaskStore)
 
-    def test_session_store_uses_configured_dir(self, test_settings: Settings) -> None:
+    def test_session_store_uses_configured_db_path(self, test_settings: Settings) -> None:
         container = DIContainer()
         register_defaults(container, test_settings)
 
         store: SessionStore = container.resolve(ISessionStore)
-        assert store._dir == test_settings.session_dir
+        assert store._db_path == test_settings.db_path
 
     def test_registry_receives_work_dir_and_safety(self, test_settings: Settings) -> None:
         container = DIContainer()
@@ -113,12 +112,12 @@ class TestCreateProductionApp:
         assert isinstance(app, AppComponents)
         assert isinstance(app.orchestrator, AgentOrchestrator)
         assert isinstance(app.session_store, SessionStore)
-        assert app.session_store._dir == test_settings.session_dir
+        assert app.session_store._db_path == test_settings.db_path
 
     def test_returns_task_store(self, test_settings: Settings) -> None:
         app = create_production_app(settings=test_settings)
         assert isinstance(app.task_store, TaskStore)
-        assert app.task_store._file == test_settings.tasks_file
+        assert app.task_store._db_path == test_settings.db_path
 
     def test_components_share_no_state(self, test_settings: Settings) -> None:
         app = create_production_app(settings=test_settings)
