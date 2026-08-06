@@ -16,7 +16,9 @@ from src.agent.orchestrator import AgentOrchestrator
 from src.di.container import DIContainer
 from src.interfaces import IMemory, ISessionStore, ITaskStore, IToolRegistry, LLMClient
 from src.memory.conversation import ConversationMemory
+from src.memory.migration import migrate_legacy_data
 from src.memory.session_store import SessionStore
+from src.memory.sqlite_store import DEFAULT_DB_PATH
 from src.memory.task_store import TaskStore
 from src.plugins import discover_tools
 from src.tools.middleware import AuditMiddleware, LoggingMiddleware, ToolPipeline
@@ -45,6 +47,12 @@ def _build_middleware() -> ToolPipeline:
 def register_defaults(container: DIContainer, settings: Settings) -> None:
     """Register the default (production) implementations with *container*."""
 
+    # One-time migration of legacy JSON data into the shared SQLite database.
+    # Only the default database location migrates, so tests (which use
+    # temporary db paths) never pull in real ~/.taskflow data.
+    if settings.db_path == DEFAULT_DB_PATH:
+        migrate_legacy_data(settings.db_path)
+
     container.register(
         LLMClient,
         lambda c: ClaudeClient(
@@ -62,6 +70,7 @@ def register_defaults(container: DIContainer, settings: Settings) -> None:
             extra_tools=extra_tools,
             pipeline=_build_middleware(),
             task_store=c.resolve(ITaskStore),
+            file_index_db=settings.db_path,
         ),
     )
 
@@ -74,12 +83,12 @@ def register_defaults(container: DIContainer, settings: Settings) -> None:
 
     container.register(
         ISessionStore,
-        lambda c: SessionStore(session_dir=settings.session_dir),
+        lambda c: SessionStore(db_path=settings.db_path),
     )
 
     container.register(
         ITaskStore,
-        lambda c: TaskStore(tasks_file=settings.tasks_file),
+        lambda c: TaskStore(db_path=settings.db_path),
     )
 
 

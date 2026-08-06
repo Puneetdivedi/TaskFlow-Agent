@@ -26,7 +26,7 @@ from src.ui.cli import (
 
 @pytest.fixture
 def store(tmp_path: Path) -> SessionStore:
-    return SessionStore(session_dir=tmp_path)
+    return SessionStore(db_path=tmp_path / "sessions.db")
 
 
 class _OrchStub:

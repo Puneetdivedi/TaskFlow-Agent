@@ -12,7 +12,7 @@ from src.memory.session_store import SessionStore
 
 @pytest.fixture
 def store(tmp_path: Path) -> SessionStore:
-    return SessionStore(session_dir=tmp_path)
+    return SessionStore(db_path=tmp_path / "sessions.db")
 
 
 def _sample_messages() -> list[dict]:
@@ -28,9 +28,9 @@ class TestSessionStore:
         store.save("work", msgs)
         assert store.load("work") == msgs
 
-    def test_save_persists_json_file(self, store: SessionStore, tmp_path: Path) -> None:
+    def test_save_persists_db(self, store: SessionStore, tmp_path: Path) -> None:
         store.save("work", _sample_messages())
-        assert (tmp_path / "work.json").exists()
+        assert (tmp_path / "sessions.db").exists()
 
     def test_save_preserves_tool_result_blocks(self, store: SessionStore) -> None:
         msgs = [
@@ -77,7 +77,6 @@ class TestSessionStore:
         assert by_name["b"].message_count == 2
         assert by_name["a"].message_count == 0
         assert by_name["b"].updated_at  # non-empty timestamp
-        assert by_name["b"].file_path.name == "b.json"
 
     def test_list_empty_dir(self, store: SessionStore) -> None:
         assert store.list() == []
@@ -100,16 +99,12 @@ class TestSessionStore:
         store.save("home", [])
         assert store.latest() == "home"
 
-    def test_corrupt_file_skipped_in_list(self, store: SessionStore, tmp_path: Path) -> None:
-        (tmp_path / "broken.json").write_text("this is not json", encoding="utf-8")
-        store.save("good", [])
-        infos = store.list()
-        assert [info.name for info in infos] == ["good"]
-
-    def test_load_corrupt_raises_value_error(self, store: SessionStore, tmp_path: Path) -> None:
-        (tmp_path / "bad.json").write_text("this is not json", encoding="utf-8")
-        with pytest.raises(ValueError, match="corrupted"):
-            store.load("bad")
+    def test_corrupt_db_starts_empty(self, store: SessionStore, tmp_path: Path) -> None:
+        # A corrupt (non-SQLite) db file is rebuilt empty on open.
+        bad = SessionStore(db_path=tmp_path / "bad.db")
+        bad.save("good", [])
+        assert bad.load("good") == []
+        assert [info.name for info in bad.list()] == ["good"]
 
     def test_invalid_names_rejected(self, store: SessionStore) -> None:
         for bad in ("", "..", "a/b", ".hidden", "has space", "a" * 65, "a\\b"):

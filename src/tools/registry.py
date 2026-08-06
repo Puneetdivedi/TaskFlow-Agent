@@ -42,6 +42,7 @@ class ToolRegistry:
         extra_tools: list[Tool] | None = None,
         pipeline: ToolPipeline | None = None,
         task_store: ITaskStore | None = None,
+        file_index_db: Path | None = None,
     ) -> None:
         self._tools: dict[str, Tool] = {}
         self._pipeline = pipeline
@@ -53,7 +54,7 @@ class ToolRegistry:
         self._register(SearchFilesTool())
         self._register(MoveFileTool())
         self._register(DeleteFileTool())
-        self._register(FileIndexTool())
+        self._register(FileIndexTool(db_path=file_index_db))
 
         # --- Built-in shell tool ---
         self._register(RunShellTool(work_dir=work_dir, safety_level=safety_level))

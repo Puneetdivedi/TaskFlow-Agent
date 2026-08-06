@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Protocol
 
 
@@ -14,7 +13,6 @@ class SessionInfo:
     name: str
     message_count: int
     updated_at: str  # ISO-8601 timestamp of the last save
-    file_path: Path
 
 
 class ISessionStore(Protocol):

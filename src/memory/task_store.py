@@ -1,12 +1,12 @@
-"""Persistent task storage — a JSON file holding the user's task list.
+"""Persistent task storage — a SQLite-backed task list.
 
-Tasks live in a single ``tasks.json`` file (default ``~/.taskflow/tasks.json``),
-mirroring the ``SessionStore``/``FileIndex`` JSON persistence pattern.
+Tasks live in the ``tasks`` table of the shared TaskFlow database
+(default ``~/.taskflow/taskflow.db``), mirroring the ``SessionStore`` and
+``FileIndex`` persistence pattern.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 from dataclasses import replace
@@ -15,54 +15,40 @@ from pathlib import Path
 from typing import Any
 
 from src.interfaces.task_store import TASK_PRIORITIES, TASK_STATUSES, Task
+from src.memory.sqlite_store import TASKS_SCHEMA, SQLiteStore
 
 logger = logging.getLogger(__name__)
 
 _ID_RE = re.compile(r"^t(\d+)$")
 
+_TASK_COLUMNS = (
+    "id",
+    "title",
+    "description",
+    "status",
+    "priority",
+    "created_at",
+    "updated_at",
+    "due_at",
+    "every_days",
+)
 
-class TaskStore:
-    """JSON-backed store for a persistent task list."""
 
-    def __init__(self, tasks_file: Path | None = None) -> None:
-        self._file = tasks_file or Path.home() / ".taskflow" / "tasks.json"
-        self._file.parent.mkdir(parents=True, exist_ok=True)
-        self._tasks: list[Task] = []
-        self._load()
+class TaskStore(SQLiteStore):
+    """SQLite-backed store for a persistent task list."""
 
-    # ------------------------------------------------------------------
-    def _load(self) -> None:
-        if not self._file.exists():
-            return
-        try:
-            payload = json.loads(self._file.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError) as exc:
-            logger.warning("Task store corrupted — starting empty: %s (%s)", self._file, exc)
-            self._tasks = []
-            return
+    _SCHEMA = TASKS_SCHEMA
 
-        raw_tasks = payload.get("tasks", []) if isinstance(payload, dict) else []
-        tasks: list[Task] = []
-        for entry in raw_tasks:
-            if not isinstance(entry, dict):
-                continue
-            try:
-                tasks.append(Task(**entry))
-            except (TypeError, ValueError):
-                logger.warning("Skipping malformed task entry: %s", entry)
-                continue
-        self._tasks = tasks
-
-    def _save(self) -> None:
-        self._file.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"tasks": [t.__dict__ for t in self._tasks]}
-        self._file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    def __init__(self, db_path: Path | None = None) -> None:
+        super().__init__(db_path)
 
     # ------------------------------------------------------------------
     def _next_id(self) -> str:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT id FROM tasks").fetchall()
         max_n = 0
-        for task in self._tasks:
-            match = _ID_RE.match(task.id)
+        for row in rows:
+            match = _ID_RE.match(row["id"])
             if match:
                 max_n = max(max_n, int(match.group(1)))
         return f"t{max_n + 1}"
@@ -115,10 +101,32 @@ class TaskStore:
             )
 
     def _find(self, task_id: str) -> Task:
-        for task in self._tasks:
-            if task.id == task_id:
-                return task
-        raise KeyError(f"Task {task_id!r} not found")
+        with self._connect() as conn:
+            row = conn.execute(
+                f"SELECT {', '.join(_TASK_COLUMNS)} FROM tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"Task {task_id!r} not found")
+        return Task(**dict(row))
+
+    def _save_row(self, task: Task) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE tasks SET title = ?, description = ?, status = ?, priority = ?, "
+                "created_at = ?, updated_at = ?, due_at = ?, every_days = ? WHERE id = ?",
+                (
+                    task.title,
+                    task.description,
+                    task.status,
+                    task.priority,
+                    task.created_at,
+                    task.updated_at,
+                    task.due_at,
+                    task.every_days,
+                    task.id,
+                ),
+            )
 
     # ------------------------------------------------------------------
     def create(
@@ -146,8 +154,12 @@ class TaskStore:
             due_at=due_at,
             every_days=every_days,
         )
-        self._tasks.append(task)
-        self._save()
+        with self._connect() as conn:
+            conn.execute(
+                f"INSERT INTO tasks ({', '.join(_TASK_COLUMNS)}) "
+                f"VALUES ({', '.join('?' * len(_TASK_COLUMNS))})",
+                tuple(task.__dict__[col] for col in _TASK_COLUMNS),
+            )
         logger.info("Created task %s: %s", task.id, task.title)
         return task
 
@@ -164,10 +176,15 @@ class TaskStore:
         if ahead_days < 0:
             raise ValueError(f"ahead_days must be >= 0, got {ahead_days}")
         cutoff = datetime.now() + timedelta(days=ahead_days)
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT "
+                + ", ".join(_TASK_COLUMNS)
+                + " FROM tasks WHERE status != 'done' AND due_at != ''"
+            ).fetchall()
+        tasks = [Task(**dict(row)) for row in rows]
         due_tasks: list[tuple[datetime, Task]] = []
-        for task in self._tasks:
-            if task.status == "done" or not task.due_at:
-                continue
+        for task in tasks:
             try:
                 due = datetime.fromisoformat(task.due_at)
             except ValueError:
@@ -180,12 +197,20 @@ class TaskStore:
 
     def list(self, status: str | None = None) -> list[Task]:
         """Return all tasks (optionally filtered by *status*), newest first."""
-        if status is not None:
-            self._validate_status(status)
-            tasks = [t for t in self._tasks if t.status == status]
-        else:
-            tasks = list(self._tasks)
-        return sorted(tasks, key=lambda t: t.created_at, reverse=True)
+        with self._connect() as conn:
+            if status is not None:
+                self._validate_status(status)
+                rows = conn.execute(
+                    "SELECT "
+                    + ", ".join(_TASK_COLUMNS)
+                    + " FROM tasks WHERE status = ? ORDER BY created_at DESC",
+                    (status,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT " + ", ".join(_TASK_COLUMNS) + " FROM tasks ORDER BY created_at DESC"
+                ).fetchall()
+        return [Task(**dict(row)) for row in rows]
 
     def update(
         self,
@@ -226,8 +251,11 @@ class TaskStore:
             return task
 
         updated = replace(task, **changes, updated_at=self._now())
-        self._tasks[self._tasks.index(task)] = updated
-        self._save()
+        fields = {**changes, "updated_at": updated.updated_at}
+        sets = ", ".join(f"{name} = ?" for name in fields)
+        values = list(fields.values()) + [task_id]
+        with self._connect() as conn:
+            conn.execute(f"UPDATE tasks SET {sets} WHERE id = ?", values)
         logger.info("Updated task %s (fields: %s)", task_id, ", ".join(changes))
         return updated
 
@@ -254,13 +282,11 @@ class TaskStore:
                     rolled.date().isoformat() if len(task.due_at) == 10 else rolled.isoformat()
                 )
                 updated = replace(task, status="todo", due_at=next_due, updated_at=now)
-                self._tasks[self._tasks.index(task)] = updated
-                self._save()
+                self._save_row(updated)
                 logger.info("Completed recurring task %s — next due %s", task_id, next_due)
                 return updated
         updated = replace(task, status="done", updated_at=now)
-        self._tasks[self._tasks.index(task)] = updated
-        self._save()
+        self._save_row(updated)
         logger.info("Completed task %s", task_id)
         return updated
 
@@ -269,7 +295,7 @@ class TaskStore:
 
         Raises ``KeyError`` if no such task exists.
         """
-        task = self._find(task_id)
-        self._tasks.remove(task)
-        self._save()
+        self._find(task_id)
+        with self._connect() as conn:
+            conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
         logger.info("Deleted task %s", task_id)

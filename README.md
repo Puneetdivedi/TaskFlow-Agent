@@ -81,9 +81,11 @@ src/
 ├── memory/
 │   ├── __init__.py        # Exports: ConversationMemory, FileIndex, SessionStore, TaskStore
 │   ├── conversation.py    # Token-aware conversation history with pruning
-│   ├── file_index.py      # Persistent filesystem index (JSON cache)
-│   ├── session_store.py   # Named session persistence (JSON)
-│   └── task_store.py      # Persistent task list (JSON)
+│   ├── sqlite_store.py    # Shared SQLite backend + table schemas
+│   ├── migration.py       # One-time legacy JSON → SQLite migration
+│   ├── file_index.py      # Persistent filesystem index (SQLite)
+│   ├── session_store.py   # Named session persistence (SQLite)
+│   └── task_store.py      # Persistent task list (SQLite)
 ├── interfaces/
 │   ├── __init__.py        # Exports: all protocols + dataclasses
 │   └── task_store.py      # ITaskStore protocol + Task dataclass
@@ -102,6 +104,7 @@ config/
 tests/
 ├── test_cli.py             # Tests for CLI helpers + command handlers
 ├── test_task_store.py      # Tests for the persistent task store
+├── test_migration.py       # Tests for the legacy JSON → SQLite migration
 ├── test_task_tools.py      # Tests for the tasks tool
 └── ...                     # Plus unit tests for agent, tools, sessions, DI, etc.
 ```
@@ -116,6 +119,7 @@ tests/
 - [x] Persistent named sessions (save/load/resume conversations)
 - [x] Persistent task list (create/list/get/update/complete/delete)
 - [x] Task scheduling (due dates + recurrence) and reminders
+- [x] SQLite persistence (tasks, sessions, and file index in one durable database)
 - [x] Web tools (DuckDuckGo search + page fetch — no API key)
 - [x] YAML tools (read/write structured YAML files)
 - [x] API error handling (rate limits, timeouts, server errors)
@@ -128,9 +132,9 @@ Conversation history survives restarts via named, persistent sessions. When you
 start the agent it offers to **resume the most recent session**; the current
 session is **auto-saved on exit** and whenever you switch sessions.
 
-Sessions are stored as JSON files under `~/.taskflow/sessions/` (override with
-`SESSION_DIR`). Session names are slugs (`letters`, `digits`, `.`, `_`, `-`) so
-they are safe to use as filenames.
+Sessions are stored in the shared SQLite database at `~/.taskflow/taskflow.db`
+(override with `TASKFLOW_DB`). Session names are slugs (`letters`, `digits`,
+`.`, `_`, `-`).
 
 - `/session new [name]` — start a fresh session (current one is saved first)
 - `/session save [name]` — checkpoint the current conversation
@@ -140,8 +144,8 @@ they are safe to use as filenames.
 
 ## Tasks
 
-Tasks persist across restarts in a single JSON file. Manage them directly from
-the CLI, or ask the agent to manage them with the `tasks` tool.
+Tasks persist across restarts in the shared SQLite database. Manage them
+directly from the CLI, or ask the agent to manage them with the `tasks` tool.
 
 - `/tasks` — list all tasks (newest first)
 - `/task create <title>` — create a task
@@ -160,7 +164,10 @@ Scheduling:
 
 The CLI shows a **Reminders** banner on startup for tasks already due, and ticks after each turn so a task that becomes due mid-session is surfaced without being asked. Recurring tasks re-notify on each new cycle.
 
-Tasks are stored as JSON in `~/.taskflow/tasks.json` (override with `TASKS_FILE`).
+Tasks, sessions, and the file index all live in the shared SQLite database at
+`~/.taskflow/taskflow.db` (override with `TASKFLOW_DB`). On first run any
+legacy JSON data (`tasks.json`, `sessions/`, `file_index.json`) is migrated
+into the database automatically.
 
 ## Configuration
 
@@ -172,8 +179,7 @@ Set these in `.env` (copy from `.env.example`):
 | `ANTHROPIC_MODEL` | `claude-sonnet-5-20250611` | Model to use |
 | `SAFETY_LEVEL` | `1` | Permission tier (0–3) |
 | `AGENT_WORK_DIR` | `.` | Working directory for the agent |
-| `SESSION_DIR` | `~/.taskflow/sessions` | Where named sessions are stored |
-| `TASKS_FILE` | `~/.taskflow/tasks.json` | Where the task list is stored |
+| `TASKFLOW_DB` | `~/.taskflow/taskflow.db` | Shared SQLite database (tasks, sessions, file index) |
 
 Web tools (`web_search` / `web_fetch`) are always available and use baked-in
 defaults (15s timeout); no configuration required.

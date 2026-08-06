@@ -330,8 +330,8 @@ class DeleteFileTool(Tool):
 class FileIndexTool(Tool):
     """Index the filesystem so the agent can quickly answer structure questions."""
 
-    def __init__(self) -> None:
-        self._index = FileIndex()
+    def __init__(self, db_path: Path | None = None) -> None:
+        self._index = FileIndex(db_path=db_path)
 
     @property
     def name(self) -> str:

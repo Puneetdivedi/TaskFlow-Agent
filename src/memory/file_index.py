@@ -5,31 +5,21 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+
+from src.memory.sqlite_store import INDEX_SCHEMA, SQLiteStore
 
 
-class FileIndex:
+class FileIndex(SQLiteStore):
     """Caches file layout so the agent can answer "what's where" quickly.
 
-    The index is stored as JSON on disk and refreshed on demand.
+    The index is stored in the ``index_roots`` table of the shared TaskFlow
+    database and refreshed on demand.
     """
 
-    def __init__(self, index_path: Path | None = None) -> None:
-        self._index_path = index_path or Path.home() / ".taskflow" / "file_index.json"
-        self._data: dict[str, dict[str, Any]] = {}
-        self._load()
+    _SCHEMA = INDEX_SCHEMA
 
-    # ------------------------------------------------------------------
-    def _load(self) -> None:
-        if self._index_path.exists():
-            try:
-                self._data = json.loads(self._index_path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                self._data = {}
-
-    def _save(self) -> None:
-        self._index_path.parent.mkdir(parents=True, exist_ok=True)
-        self._index_path.write_text(json.dumps(self._data, indent=2), encoding="utf-8")
+    def __init__(self, db_path: Path | None = None) -> None:
+        super().__init__(db_path)
 
     # ------------------------------------------------------------------
     def refresh(self, root: Path | str) -> str:
@@ -41,7 +31,7 @@ class FileIndex:
         if not root.is_dir():
             return f"Not a directory: {root}"
 
-        entries: dict[str, dict[str, Any]] = {}
+        entries: dict[str, dict[str, object]] = {}
         total_size = 0
         file_count = 0
         dir_count = 0
@@ -64,38 +54,48 @@ class FileIndex:
             except (OSError, ValueError):
                 continue
 
-        self._data[str(root)] = {
-            "entries": entries,
-            "file_count": file_count,
-            "dir_count": dir_count,
-            "total_size": total_size,
-            "indexed_at": datetime.now().isoformat(),
-        }
-        self._save()
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO index_roots "
+                "(root, file_count, dir_count, total_size, indexed_at, entries) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    str(root),
+                    file_count,
+                    dir_count,
+                    total_size,
+                    datetime.now().isoformat(),
+                    json.dumps(entries),
+                ),
+            )
 
         return f"Indexed {root}: {file_count} files, {dir_count} directories, {total_size:,} bytes"
 
     # ------------------------------------------------------------------
     def query(self, path: str | None = None) -> str:
         """Return a human-readable summary of what's in the index."""
-        if not self._data:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT root, file_count, dir_count, total_size, indexed_at FROM index_roots"
+            ).fetchall()
+        if not rows:
             return "Index is empty — run refresh() first."
 
         if path:
             key = str(Path(path).expanduser().resolve())
-            info = self._data.get(key)
-            if info is None:
-                return f"No index entry for {key}"
-            return (
-                f"Indexed at {info['indexed_at']}: "
-                f"{info['file_count']} files, {info['dir_count']} dirs, "
-                f"{info['total_size']:,} bytes"
-            )
+            for row in rows:
+                if row["root"] == key:
+                    return (
+                        f"Indexed at {row['indexed_at']}: "
+                        f"{row['file_count']} files, {row['dir_count']} dirs, "
+                        f"{row['total_size']:,} bytes"
+                    )
+            return f"No index entry for {key}"
 
         lines = ["Indexed roots:"]
-        for root, info in self._data.items():
+        for row in rows:
             lines.append(
-                f"  {root}: {info['file_count']} files, "
-                f"{info['dir_count']} dirs, {info['total_size']:,} bytes"
+                f"  {row['root']}: {row['file_count']} files, "
+                f"{row['dir_count']} dirs, {row['total_size']:,} bytes"
             )
         return "\n".join(lines)
