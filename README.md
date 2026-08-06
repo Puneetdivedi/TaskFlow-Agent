@@ -58,6 +58,38 @@ The agent can use these tools to accomplish tasks autonomously:
 | `yaml_write` | Write structured YAML to a file (parses/normalizes content, creates parent dirs) |
 | `tasks` | Manage a persistent task list (create/list/get/update/complete/due/delete, due dates + recurrence) |
 
+## MCP Server
+
+TaskFlow's tools can be exposed to any Model Context Protocol client (Claude
+Desktop, Claude Code, or a third-party host) as an MCP server. The server
+advertises the same tools as the interactive agent — `read_file`, `run_shell`,
+`web_search`, `yaml_read`, `tasks`, and friends — with identical names,
+descriptions, and input schemas.
+
+Start the server:
+
+```bash
+python -m src.mcp
+```
+
+It speaks MCP over **stdio**, so no ports or configuration are needed. In
+Claude Desktop, point a new server entry at it:
+
+```json
+{
+  "mcpServers": {
+    "taskflow": {
+      "command": "python",
+      "args": ["-m", "src.mcp"]
+    }
+  }
+}
+```
+
+The server shares TaskFlow's SQLite database (`~/.taskflow/taskflow.db`), so
+tasks managed through MCP are the same ones the CLI sees. Tool results (and
+any tool error) are returned as MCP text results.
+
 ## Project Structure
 
 ```
@@ -93,6 +125,10 @@ src/
 │   ├── __init__.py
 │   ├── container.py       # Minimal DI container
 │   └── factories.py       # Production wiring + AppComponents
+├── mcp/
+│   ├── __init__.py        # Exports: TaskFlowMCPServer
+│   ├── server.py          # MCP server exposing TaskFlow's tools over stdio
+│   └── __main__.py        # Entry point: python -m src.mcp
 ├── plugins/
 │   └── __init__.py        # Entry-point tool discovery
 └── ui/
@@ -122,6 +158,7 @@ tests/
 - [x] SQLite persistence (tasks, sessions, and file index in one durable database)
 - [x] Web tools (DuckDuckGo search + page fetch — no API key)
 - [x] YAML tools (read/write structured YAML files)
+- [x] MCP server (expose all tools to any Model Context Protocol client)
 - [x] API error handling (rate limits, timeouts, server errors)
 - [x] Safety level enforcement
 - [x] Rich CLI interface (colored output, tables, markdown)
