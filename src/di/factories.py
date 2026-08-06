@@ -15,6 +15,7 @@ from src.agent.claude_client import ClaudeClient
 from src.agent.orchestrator import AgentOrchestrator
 from src.di.container import DIContainer
 from src.interfaces import IMemory, ISessionStore, ITaskStore, IToolRegistry, LLMClient
+from src.mcp.client import build_mcp_tools, load_mcp_servers
 from src.memory.conversation import ConversationMemory
 from src.memory.migration import migrate_legacy_data
 from src.memory.session_store import SessionStore
@@ -61,7 +62,7 @@ def register_defaults(container: DIContainer, settings: Settings) -> None:
         ),
     )
 
-    extra_tools = discover_tools()
+    extra_tools = discover_tools() + build_mcp_tools(load_mcp_servers())
     container.register(
         IToolRegistry,
         lambda c: ToolRegistry(
