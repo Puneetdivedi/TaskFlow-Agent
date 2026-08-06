@@ -8,7 +8,7 @@ LLM providers, custom memory backends) without modifying consumers.
 from __future__ import annotations
 
 from src.interfaces.file_index import IFileIndex
-from src.interfaces.llm_client import LLMClient
+from src.interfaces.llm_client import LLMClient, TextDeltaSink, ToolCallSink
 from src.interfaces.memory import IMemory
 from src.interfaces.session_store import ISessionStore, SessionInfo
 from src.interfaces.task_store import ITaskStore, Task
@@ -23,4 +23,6 @@ __all__ = [
     "LLMClient",
     "SessionInfo",
     "Task",
+    "TextDeltaSink",
+    "ToolCallSink",
 ]

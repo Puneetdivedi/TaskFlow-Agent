@@ -28,6 +28,21 @@ class MockLLMClient:
     ) -> Any:
         return self._response
 
+    async def stream_messages(
+        self,
+        messages: list[dict] | None = None,
+        system: str | None = None,
+        tools: list[dict] | None = None,
+        *,
+        on_text_delta: Any = None,
+    ) -> Any:
+        """Emit any text in the mock response through *on_text_delta*, then
+        return the response (mirrors the streaming contract)."""
+        for block in getattr(self._response, "content", []):
+            if getattr(block, "type", None) == "text" and on_text_delta is not None:
+                await on_text_delta(block.text)
+        return self._response
+
 
 class MockMemory:
     """Minimal IMemory stub that tracks messages in-memory."""

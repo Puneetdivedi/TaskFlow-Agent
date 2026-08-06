@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import io
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
+from rich.console import Console
 
 from src.memory.session_store import SessionStore
 from src.memory.task_store import TaskStore
@@ -529,3 +531,54 @@ class TestReminderHelpers:
         assert startup_due  # something is due
         reported.update((t.id, t.due_at) for t in startup_due)
         assert newly_due_tasks(task_store, reported) == []
+
+
+class _StubStreamOrch:
+    """Orchestrator stand-in that drives its streaming callbacks."""
+
+    async def run(self, user_input, *, on_text_delta=None, on_tool_call=None):
+        assert user_input == "hello"
+        await on_text_delta("Hel")
+        await on_text_delta("lo")
+        await on_tool_call("read_file", {"path": "a.txt"})
+        await on_text_delta(" there")
+        return "Hello there"
+
+
+class TestStreamingHelpers:
+    def test_stream_tool_label_compact(self) -> None:
+        label = cli_module._stream_tool_label("run_shell", {"cmd": "ls -la"})
+        assert label == "run_shell(cmd=ls -la)"
+
+    def test_stream_tool_label_truncates_long_values(self) -> None:
+        long = "x" * 200
+        label = cli_module._stream_tool_label("write_file", {"path": "a.txt", "content": long})
+        assert label.startswith("write_file(path=")
+        assert "…" in label
+        assert len(label) < len(long)  # value was truncated, not inlined whole
+
+    def test_should_print_final_when_streamed_as_tail(self) -> None:
+        # The answer was already streamed as the tail of the panel.
+        assert cli_module._should_print_final("Hi\nThere", "There") is False
+        assert cli_module._should_print_final("Hello there", "Hello there") is False
+
+    def test_should_print_final_when_not_streamed(self) -> None:
+        # Error returns / stop markers are never streamed — must be printed.
+        assert cli_module._should_print_final("", "Error: boom") is True
+        assert cli_module._should_print_final("partial", "[Agent stopped]") is True
+
+    def test_should_print_final_empty_response(self) -> None:
+        assert cli_module._should_print_final("", "") is False
+
+    async def test_run_streamed_turn_renders_and_returns(self) -> None:
+        buffer = io.StringIO()
+        console = Console(file=buffer, width=100)
+
+        final, streamed = await cli_module._run_streamed_turn(_StubStreamOrch(), "hello", console)
+
+        assert final == "Hello there"
+        assert streamed == "Hello there"
+        rendered = buffer.getvalue()
+        # both the streamed text and the tool-call line reached the panel
+        assert "Hello there" in rendered
+        assert "read_file" in rendered
