@@ -90,6 +90,36 @@ The server shares TaskFlow's SQLite database (`~/.taskflow/taskflow.db`), so
 tasks managed through MCP are the same ones the CLI sees. Tool results (and
 any tool error) are returned as MCP text results.
 
+## MCP Client
+
+TaskFlow can also call **out to** external MCP servers. Configure them with
+the `MCP_SERVERS` environment variable — a JSON object mapping a server name
+to its launch details:
+
+```json
+{
+  "filesystem": {
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+  }
+}
+```
+
+At startup each configured server is queried over stdio for its tool list,
+and every remote tool becomes a first-class agent tool — same name,
+description, and input schema the remote server advertises — alongside the
+built-ins and plugins. Call one and the arguments are forwarded to the remote
+server; its text result becomes the tool result.
+
+Notes:
+
+- A server that fails to connect is logged and skipped — a bad config never
+  blocks startup (each server is given up to 30s to respond).
+- External tools are invoked through a fresh connection per call, which is
+  simple and thread-safe; the cost is process startup on each call.
+- `MCP_SERVERS` is read at startup. Setting it to `{}` (or leaving it unset)
+  disables the client.
+
 ## Project Structure
 
 ```
@@ -128,6 +158,7 @@ src/
 ├── mcp/
 │   ├── __init__.py        # Exports: TaskFlowMCPServer
 │   ├── server.py          # MCP server exposing TaskFlow's tools over stdio
+│   ├── client.py          # MCP client: tools from external MCP_SERVERS
 │   └── __main__.py        # Entry point: python -m src.mcp
 ├── plugins/
 │   └── __init__.py        # Entry-point tool discovery
@@ -159,6 +190,7 @@ tests/
 - [x] Web tools (DuckDuckGo search + page fetch — no API key)
 - [x] YAML tools (read/write structured YAML files)
 - [x] MCP server (expose all tools to any Model Context Protocol client)
+- [x] MCP client (call tools from external MCP servers, configured via env)
 - [x] API error handling (rate limits, timeouts, server errors)
 - [x] Safety level enforcement
 - [x] Rich CLI interface (colored output, tables, markdown)
@@ -217,6 +249,7 @@ Set these in `.env` (copy from `.env.example`):
 | `SAFETY_LEVEL` | `1` | Permission tier (0–3) |
 | `AGENT_WORK_DIR` | `.` | Working directory for the agent |
 | `TASKFLOW_DB` | `~/.taskflow/taskflow.db` | Shared SQLite database (tasks, sessions, file index) |
+| `MCP_SERVERS` | — | JSON config of external MCP servers to call (see [MCP Client](#mcp-client)) |
 
 Web tools (`web_search` / `web_fetch`) are always available and use baked-in
 defaults (15s timeout); no configuration required.
