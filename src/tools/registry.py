@@ -48,40 +48,41 @@ class ToolRegistry:
         self._pipeline = pipeline
 
         # --- Built-in file tools ---
-        self._register(ReadFileTool())
-        self._register(WriteFileTool())
-        self._register(ListFilesTool())
-        self._register(SearchFilesTool())
-        self._register(MoveFileTool())
-        self._register(DeleteFileTool())
-        self._register(FileIndexTool(db_path=file_index_db))
+        self.add_tool(ReadFileTool())
+        self.add_tool(WriteFileTool())
+        self.add_tool(ListFilesTool())
+        self.add_tool(SearchFilesTool())
+        self.add_tool(MoveFileTool())
+        self.add_tool(DeleteFileTool())
+        self.add_tool(FileIndexTool(db_path=file_index_db))
 
         # --- Built-in shell tool ---
-        self._register(RunShellTool(work_dir=work_dir, safety_level=safety_level))
+        self.add_tool(RunShellTool(work_dir=work_dir, safety_level=safety_level))
 
         # --- Built-in web tools (read-only; always available, no safety gating) ---
-        self._register(WebSearchTool())
-        self._register(WebFetchTool())
+        self.add_tool(WebSearchTool())
+        self.add_tool(WebFetchTool())
 
         # --- Built-in YAML tools (structured config/spec read/write) ---
-        self._register(YamlReadTool())
-        self._register(YamlWriteTool())
+        self.add_tool(YamlReadTool())
+        self.add_tool(YamlWriteTool())
 
         # --- Built-in task tool ---
         if task_store is not None:
-            self._register(TaskTool(task_store))
+            self.add_tool(TaskTool(task_store))
 
         # --- Extra (plugin) tools ---
         for t in extra_tools or []:
             if t.name in self._tools:
                 logger.warning("Skipping extra tool %r: name already registered", t.name)
                 continue
-            self._register(t)
+            self.add_tool(t)
 
         logger.info("ToolRegistry initialised with %d tools", len(self._tools))
 
     # ------------------------------------------------------------------
-    def _register(self, tool: Tool) -> None:
+    def add_tool(self, tool: Tool) -> None:
+        """Register *tool* by name, raising on a duplicate name."""
         if tool.name in self._tools:
             raise ValueError(f"Duplicate tool name: {tool.name}")
         self._tools[tool.name] = tool

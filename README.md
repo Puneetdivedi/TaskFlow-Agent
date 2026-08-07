@@ -196,6 +196,7 @@ tests/
 - [x] Rich CLI interface (colored output, tables, markdown)
 - [x] Streaming responses (text streams live in the CLI as the model generates) with a clean Ctrl-C abort
 - [x] Semantic memory (old turns condensed into a rolling summary, injected as context, persisted per session)
+- [x] Sub-agents (delegate focused, isolated tasks to specialized roles)
 
 ## Sessions
 
@@ -338,3 +339,32 @@ Contract notes:
 - A plugin that fails to load, is not Tool-shaped, or collides with an existing
   tool name is logged and skipped — one bad plugin never blocks startup.
 - On a name collision, the built-in tool (or the first plugin registered) wins.
+
+## Sub-agents
+
+The main agent can delegate a self-contained subtask to a **sub-agent** — a
+named, focused role that runs its own short, isolated tool loop. This lets a
+broad request be tackled phase by phase (research → code → review) without
+polluting the main conversation history or exposing the full tool set at once.
+
+The agent invokes a sub-agent through the `subagent` tool with a `name` and a
+self-contained `task`; the sub-agent runs to completion and returns a final
+report string. Each delegation:
+
+- starts from a **fresh context** (the sub-agent never sees the main thread's history),
+- is limited to a **restricted tool set** (it can only see and run its own tools),
+- is capped at a **step budget** so no delegation can loop forever, and
+- is never offered the `subagent` tool itself, so sub-agents cannot spawn
+  unbounded descendants.
+
+Three built-in roles ship with the agent:
+
+| Role | Focus | Tools |
+| --- | --- | --- |
+| `researcher` | gather and verify information, cite sources | `web_search`, `web_fetch`, `read_file`, `list_files`, `search_files` |
+| `coder` | read, implement, and verify changes | file tools, `run_shell`, `yaml_read`, `yaml_write` |
+| `reviewer` | find correctness/security/style issues, ranked by severity | `read_file`, `list_files`, `search_files`, `run_shell` |
+
+Sub-agent tool calls dispatch through the same tool registry as the main agent,
+so middleware (logging/audit), plugin tools, and MCP tools behave identically
+inside a sub-agent loop.
