@@ -42,6 +42,15 @@ class Settings:
     # --- Safety ---
     safety_level: int = field(default_factory=lambda: int(os.getenv("SAFETY_LEVEL", "1")))
 
+    # --- Guardrails (policy layer gating tool calls) ---
+    guardrails_enabled: bool = field(
+        default_factory=lambda: os.getenv("GUARDRAILS_ENABLED", "1").lower()
+        in ("1", "true", "yes")
+    )
+    max_tool_result_chars: int = field(
+        default_factory=lambda: int(os.getenv("MAX_TOOL_RESULT_CHARS", "20000"))
+    )
+
     # --- Paths ---
     work_dir: Path = field(default_factory=lambda: Path(os.getenv("AGENT_WORK_DIR", ".")).resolve())
     memory_dir: Path = field(default_factory=lambda: Path.home() / ".taskflow" / "memory")
@@ -88,6 +97,11 @@ def _validate_settings(s: Settings) -> None:
     if s.summary_threshold_tokens < 0:
         raise ValueError(
             f"MEMORY_SUMMARY_THRESHOLD must be >= 0 (0 disables), got {s.summary_threshold_tokens}"
+        )
+
+    if s.max_tool_result_chars < 0:
+        raise ValueError(
+            f"MAX_TOOL_RESULT_CHARS must be >= 0 (0 disables truncation), got {s.max_tool_result_chars}"
         )
 
     valid_levels = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}

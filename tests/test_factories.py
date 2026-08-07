@@ -20,7 +20,7 @@ from src.interfaces import IMemory, ISessionStore, ITaskStore, IToolRegistry, LL
 from src.memory.conversation import ConversationMemory
 from src.memory.session_store import SessionStore
 from src.memory.task_store import TaskStore
-from src.tools.base import Tool
+from src.tools.base import Tool, ToolError
 from src.tools.registry import ToolRegistry
 
 
@@ -92,6 +92,21 @@ class TestRegisterDefaults:
 
         registry: ToolRegistry = container.resolve(IToolRegistry)
         assert "subagent" in registry.tool_names
+
+    async def test_guardrails_block_path_escape(self, test_settings: Settings) -> None:
+        """The production pipeline enforces path confinement on real dispatch."""
+        container = DIContainer()
+        register_defaults(container, test_settings)
+
+        registry: ToolRegistry = container.resolve(IToolRegistry)
+        inside = test_settings.work_dir / "f.txt"
+        inside.write_text("hi")
+
+        with pytest.raises(ToolError, match="Path traversal"):
+            await registry.dispatch("read_file", {"path": "/etc/passwd"})
+
+        result = await registry.dispatch("read_file", {"path": str(inside)})
+        assert result == "hi"
 
     def test_register_defaults_includes_plugin_tools(
         self, test_settings: Settings, monkeypatch: pytest.MonkeyPatch
