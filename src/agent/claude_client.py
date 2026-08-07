@@ -24,6 +24,13 @@ _MAX_RETRIES = 5
 _BASE_DELAY = 1.0
 _MAX_DELAY = 16.0
 
+#: Anthropic prompt-caching marker. Attaching this to the last system text
+#: block and the last tool definition caches everything up to and including
+#: that block for 5 minutes, so unchanged prefixes are not re-encoded on every
+#: turn. The API silently ignores markers on prefixes below the minimum
+#: cacheable size (~1024 tokens), so annotating small prompts is harmless.
+_CACHE_CONTROL: dict[str, str] = {"type": "ephemeral"}
+
 
 class ClaudeClientError(Exception):
     """Raised when a Claude API call fails after all retries."""
@@ -41,10 +48,48 @@ class ClaudeClient:
         api_key: str,
         model: str = "claude-sonnet-5-20250611",
         max_tokens: int = 4096,
+        *,
+        prompt_caching: bool = True,
     ) -> None:
         self._client = AsyncAnthropic(api_key=api_key)
         self._model = model
         self._max_tokens = max_tokens
+        self._prompt_caching = prompt_caching
+
+    # ------------------------------------------------------------------
+    def _maybe_cache_system(self, system: SystemParam) -> SystemParam:
+        """Attach a cache breakpoint to the *last* system block.
+
+        A plain string is converted to a single ``{"type": "text", ...}``
+        block so it can carry ``cache_control``. A block list gets the marker
+        on its final block only (the base prompt), so the whole prefix —
+        summary + base prompt — is cached together. The caller's list is never
+        mutated.
+        """
+        if not self._prompt_caching or not system:
+            return system
+        if isinstance(system, str):
+            return [{"type": "text", "text": system, "cache_control": _CACHE_CONTROL}]
+        blocks = [dict(block) for block in system]
+        if blocks:
+            blocks[-1] = {**blocks[-1], "cache_control": _CACHE_CONTROL}
+        return blocks
+
+    def _maybe_cache_tools(
+        self,
+        tool_defs: list[dict[str, Any]] | None,
+    ) -> list[dict[str, Any]] | None:
+        """Attach a cache breakpoint to the *last* tool definition.
+
+        Returns a shallow copy so the registry's shared descriptors are never
+        mutated. Marking the final tool caches the system blocks and the whole
+        tool list as one prefix.
+        """
+        if not self._prompt_caching or not tool_defs:
+            return tool_defs
+        defs = [dict(defn) for defn in tool_defs]
+        defs[-1] = {**defs[-1], "cache_control": _CACHE_CONTROL}
+        return defs
 
     # ------------------------------------------------------------------
     async def send_messages(
@@ -67,9 +112,9 @@ class ClaudeClient:
             "messages": messages,
         }
         if system:
-            kwargs["system"] = system
+            kwargs["system"] = self._maybe_cache_system(system)
         if tools:
-            kwargs["tools"] = tools
+            kwargs["tools"] = self._maybe_cache_tools(tools)
 
         logger.debug("Calling Claude API — model=%s %d messages", self._model, len(messages))
         return await self._call_with_retry(kwargs)
@@ -95,9 +140,9 @@ class ClaudeClient:
             "messages": messages,
         }
         if system:
-            kwargs["system"] = system
+            kwargs["system"] = self._maybe_cache_system(system)
         if tools:
-            kwargs["tools"] = tools
+            kwargs["tools"] = self._maybe_cache_tools(tools)
 
         logger.debug(
             "Calling Claude API (streaming) — model=%s %d messages",

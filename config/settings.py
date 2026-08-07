@@ -42,6 +42,12 @@ class Settings:
     # --- Safety ---
     safety_level: int = field(default_factory=lambda: int(os.getenv("SAFETY_LEVEL", "1")))
 
+    # --- Prompt caching (Anthropic ephemeral cache_control breakpoints) ---
+    prompt_caching_enabled: bool = field(
+        default_factory=lambda: os.getenv("PROMPT_CACHING_ENABLED", "1").lower()
+        in ("1", "true", "yes")
+    )
+
     # --- Guardrails (policy layer gating tool calls) ---
     guardrails_enabled: bool = field(
         default_factory=lambda: os.getenv("GUARDRAILS_ENABLED", "1").lower()

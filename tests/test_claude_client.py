@@ -53,7 +53,8 @@ class TestClaudeClient:
         assert kwargs["max_tokens"] == 4096
 
     async def test_system_and_tools_passed_through(self, fake_anthropic) -> None:
-        client = ClaudeClient(api_key="k")
+        # prompt_caching=False keeps system/tools untouched (see TestPromptCaching).
+        client = ClaudeClient(api_key="k", prompt_caching=False)
         tools = [{"name": "t"}]
         await client.send_messages(
             [{"role": "user", "content": "x"}],
@@ -116,6 +117,79 @@ class TestClaudeClient:
             with pytest.raises(ClaudeClientError, match="after 3 retries"):
                 await client.send_messages([])
         assert fake_messages.await_count == 3
+
+
+class TestPromptCaching:
+    """cache_control breakpoints on the system prompt and tool definitions."""
+
+    async def test_system_string_becomes_cached_text_block(self, fake_anthropic) -> None:
+        client = ClaudeClient(api_key="k")
+        await client.send_messages([], system="hi")
+        kwargs = fake_anthropic.messages.create.await_args.kwargs
+        assert kwargs["system"] == [
+            {"type": "text", "text": "hi", "cache_control": {"type": "ephemeral"}}
+        ]
+
+    async def test_system_block_list_caches_last_block_only(self, fake_anthropic) -> None:
+        system = [
+            {"type": "text", "text": "summary"},
+            {"type": "text", "text": "base prompt"},
+        ]
+        client = ClaudeClient(api_key="k")
+        await client.send_messages([], system=system)
+        kwargs = fake_anthropic.messages.create.await_args.kwargs
+        sent = kwargs["system"]
+        assert "cache_control" not in sent[0]
+        assert sent[1] == {
+            "type": "text",
+            "text": "base prompt",
+            "cache_control": {"type": "ephemeral"},
+        }
+        # The caller's block list is never mutated.
+        assert "cache_control" not in system[1]
+
+    async def test_system_none_is_omitted(self, fake_anthropic) -> None:
+        client = ClaudeClient(api_key="k")
+        await client.send_messages([])
+        kwargs = fake_anthropic.messages.create.await_args.kwargs
+        assert "system" not in kwargs
+
+    async def test_tools_mark_last_definition_only(self, fake_anthropic) -> None:
+        tools = [{"name": "a"}, {"name": "b"}]
+        client = ClaudeClient(api_key="k")
+        await client.send_messages([], tools=tools)
+        kwargs = fake_anthropic.messages.create.await_args.kwargs
+        sent = kwargs["tools"]
+        assert "cache_control" not in sent[0]
+        assert sent[-1] == {"name": "b", "cache_control": {"type": "ephemeral"}}
+        # The registry's shared tool defs are never mutated.
+        assert "cache_control" not in tools[-1]
+
+    async def test_empty_tools_unchanged(self, fake_anthropic) -> None:
+        client = ClaudeClient(api_key="k")
+        await client.send_messages([], tools=[])
+        kwargs = fake_anthropic.messages.create.await_args.kwargs
+        assert "tools" not in kwargs
+
+    async def test_disabled_passes_through_unchanged(self, fake_anthropic) -> None:
+        tools = [{"name": "t"}]
+        client = ClaudeClient(api_key="k", prompt_caching=False)
+        await client.send_messages([], system="sys", tools=tools)
+        kwargs = fake_anthropic.messages.create.await_args.kwargs
+        assert kwargs["system"] == "sys"
+        assert kwargs["tools"] is tools
+
+    async def test_streaming_marks_system_and_last_tool(self, fake_anthropic) -> None:
+        fake_anthropic.messages.stream = MagicMock(
+            return_value=_FakeStreamManager(_FakeStream(["x"]))
+        )
+        client = ClaudeClient(api_key="k")
+        await client.stream_messages([], system="hi", tools=[{"name": "t"}])
+        kwargs = fake_anthropic.messages.stream.call_args.kwargs
+        assert kwargs["system"] == [
+            {"type": "text", "text": "hi", "cache_control": {"type": "ephemeral"}}
+        ]
+        assert kwargs["tools"] == [{"name": "t", "cache_control": {"type": "ephemeral"}}]
 
 
 # ---------------------------------------------------------------------------
@@ -190,7 +264,7 @@ class TestClaudeClientStreaming:
             return_value=_FakeStreamManager(_FakeStream(["x"]))
         )
         tools = [{"name": "t"}]
-        client = ClaudeClient(api_key="k")
+        client = ClaudeClient(api_key="k", prompt_caching=False)
         await client.stream_messages([], system="sys", tools=tools)
         kwargs = fake_anthropic.messages.stream.call_args.kwargs
         assert kwargs["system"] == "sys"

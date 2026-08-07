@@ -10,8 +10,9 @@ TextDeltaSink: TypeAlias = Callable[[str], Awaitable[None]]
 ToolCallSink: TypeAlias = Callable[[str, dict[str, Any]], Awaitable[None]]
 #: The ``system`` argument: a plain prompt string or a list of text blocks
 #: (used by the orchestrator to inject a rolling conversation summary ahead of
-#: the base prompt).
-SystemParam: TypeAlias = str | list[dict[str, str]] | None
+#: the base prompt). ``Any`` values allow a block to carry Anthropic's optional
+#: ``cache_control`` marker for prompt caching.
+SystemParam: TypeAlias = str | list[dict[str, Any]] | None
 
 
 class LLMClient(Protocol):

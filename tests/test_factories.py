@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from config.settings import Settings
+from src.agent.claude_client import ClaudeClient
 from src.agent.orchestrator import AgentOrchestrator
 from src.di.container import DIContainer
 from src.di.factories import (
@@ -117,6 +118,27 @@ class TestRegisterDefaults:
 
         registry: ToolRegistry = container.resolve(IToolRegistry)
         assert "echo" in registry.tool_names
+
+    def test_claude_client_honors_prompt_caching_setting(self, test_settings: Settings) -> None:
+        container = DIContainer()
+        register_defaults(container, test_settings)
+
+        client: ClaudeClient = container.resolve(LLMClient)
+        assert client._prompt_caching == test_settings.prompt_caching_enabled
+
+    def test_prompt_caching_can_be_disabled(self, tmp_path: Path) -> None:
+        settings = Settings(
+            anthropic_api_key="test-key",
+            work_dir=tmp_path,
+            memory_dir=tmp_path / "memory",
+            db_path=tmp_path / "taskflow.db",
+            prompt_caching_enabled=False,
+        )
+        container = DIContainer()
+        register_defaults(container, settings)
+
+        client: ClaudeClient = container.resolve(LLMClient)
+        assert client._prompt_caching is False
 
 
 class TestCreateProductionOrchestrator:

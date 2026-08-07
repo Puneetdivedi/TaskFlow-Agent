@@ -103,6 +103,7 @@ def register_defaults(container: DIContainer, settings: Settings) -> None:
         lambda c: ClaudeClient(
             api_key=settings.anthropic_api_key,
             model=settings.anthropic_model,
+            prompt_caching=settings.prompt_caching_enabled,
         ),
     )
 
