@@ -198,6 +198,7 @@ tests/
 - [x] Semantic memory (old turns condensed into a rolling summary, injected as context, persisted per session)
 - [x] Sub-agents (delegate focused, isolated tasks to specialized roles)
 - [x] Agent guardrails (policy layer gating tool calls: path confinement, dangerous commands, output caps)
+- [x] Anthropic prompt caching (ephemeral `cache_control` breakpoints on the system prompt and tool definitions)
 
 ## Sessions
 
@@ -394,3 +395,27 @@ Tune the layer via environment variables:
 | --- | --- | --- |
 | `GUARDRAILS_ENABLED` | `1` | Set to `0` to disable path/command checks and truncation |
 | `MAX_TOOL_RESULT_CHARS` | `20000` | Cap on a single tool result; `0` disables truncation |
+
+## Prompt Caching
+
+Every turn re-sends the same static prefix — the system prompt and the full
+tool-definition list — as fresh input tokens. TaskFlow marks that prefix with
+Anthropic's prompt caching (`cache_control: {"type": "ephemeral"}`) so the API
+reuses the encoded prefix for **5 minutes** across turns, cutting input cost and
+latency on multi-turn sessions.
+
+The breakpoint is added to the **last** system block (the base prompt) and the
+**last** tool definition, which caches everything up to and including them.
+Because the markers are injected in `ClaudeClient` — the single client every
+loop funnels through — the main agent, sub-agents, and the summarizer all
+benefit with no per-loop code. Tool definitions and system lists are only
+copied, never mutated.
+
+Notes:
+
+- Prefixes under the minimum cacheable size (~1024 tokens) are silently ignored
+  by the API, so marking a short prompt is harmless.
+- Set `PROMPT_CACHING_ENABLED=0` to disable.
+- Verify with a live `ANTHROPIC_API_KEY`: compare the `cache_read_input_tokens`
+  field in the API usage across turns — it climbs as prefixes are served from
+  cache.

@@ -108,3 +108,13 @@ class TestSettings:
     def test_max_tool_result_chars_zero_allowed(self) -> None:
         """0 disables truncation (mirrors MEMORY_SUMMARY_THRESHOLD)."""
         assert Settings(max_tool_result_chars=0).max_tool_result_chars == 0
+
+    def test_prompt_caching_defaults_to_enabled(self) -> None:
+        assert Settings().prompt_caching_enabled is True
+
+    def test_prompt_caching_env_bool_parsing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("PROMPT_CACHING_ENABLED", "0")
+        assert Settings().prompt_caching_enabled is False
+
+        monkeypatch.setenv("PROMPT_CACHING_ENABLED", "yes")
+        assert Settings().prompt_caching_enabled is True
