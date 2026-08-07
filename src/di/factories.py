@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from config.settings import Settings
 from src.agent.claude_client import ClaudeClient
 from src.agent.orchestrator import AgentOrchestrator
+from src.agent.subagent import SubAgentRunner, default_subagents
 from src.di.container import DIContainer
 from src.interfaces import IMemory, ISessionStore, ITaskStore, IToolRegistry, LLMClient
 from src.mcp.client import build_mcp_tools, load_mcp_servers
@@ -25,6 +26,7 @@ from src.memory.task_store import TaskStore
 from src.plugins import discover_tools
 from src.tools.middleware import AuditMiddleware, LoggingMiddleware, ToolPipeline
 from src.tools.registry import ToolRegistry
+from src.tools.subagent_tool import SubAgentTool
 
 
 @dataclass(frozen=True)
@@ -46,6 +48,32 @@ def _build_middleware() -> ToolPipeline:
     )
 
 
+def _build_tool_registry(container: DIContainer, settings: Settings) -> ToolRegistry:
+    """Build the tool registry and wire in the ``subagent`` delegation tool.
+
+    Construction order matters: the registry is built first so the sub-agent
+    runner can dispatch through it, then the ``subagent`` tool (which owns the
+    runner) is spliced in as the last registered tool.
+    """
+    extra_tools = discover_tools() + build_mcp_tools(load_mcp_servers())
+    registry = ToolRegistry(
+        work_dir=settings.work_dir,
+        safety_level=settings.safety_level,
+        extra_tools=extra_tools,
+        pipeline=_build_middleware(),
+        task_store=container.resolve(ITaskStore),
+        file_index_db=settings.db_path,
+    )
+
+    runner = SubAgentRunner(
+        llm_client=container.resolve(LLMClient),
+        registry=registry,
+        subagents=default_subagents(),
+    )
+    registry.add_tool(SubAgentTool(runner))
+    return registry
+
+
 def register_defaults(container: DIContainer, settings: Settings) -> None:
     """Register the default (production) implementations with *container*."""
 
@@ -63,17 +91,9 @@ def register_defaults(container: DIContainer, settings: Settings) -> None:
         ),
     )
 
-    extra_tools = discover_tools() + build_mcp_tools(load_mcp_servers())
     container.register(
         IToolRegistry,
-        lambda c: ToolRegistry(
-            work_dir=settings.work_dir,
-            safety_level=settings.safety_level,
-            extra_tools=extra_tools,
-            pipeline=_build_middleware(),
-            task_store=c.resolve(ITaskStore),
-            file_index_db=settings.db_path,
-        ),
+        lambda c: _build_tool_registry(c, settings),
     )
 
     container.register(

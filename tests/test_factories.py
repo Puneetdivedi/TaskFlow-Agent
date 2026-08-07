@@ -86,6 +86,13 @@ class TestRegisterDefaults:
 
         assert container.resolve(IMemory) is container.resolve(IMemory)
 
+    def test_register_defaults_includes_subagent_tool(self, test_settings: Settings) -> None:
+        container = DIContainer()
+        register_defaults(container, test_settings)
+
+        registry: ToolRegistry = container.resolve(IToolRegistry)
+        assert "subagent" in registry.tool_names
+
     def test_register_defaults_includes_plugin_tools(
         self, test_settings: Settings, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -102,6 +109,7 @@ class TestCreateProductionOrchestrator:
         orch = create_production_orchestrator(settings=test_settings)
         assert isinstance(orch, AgentOrchestrator)
         assert orch.tools.tool_names
+        assert "subagent" in orch.tools.tool_names
         assert isinstance(orch.memory, ConversationMemory)
         assert orch._max_tool_calls == test_settings.max_tool_calls_per_turn
 
