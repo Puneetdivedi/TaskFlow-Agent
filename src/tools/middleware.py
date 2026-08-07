@@ -14,11 +14,34 @@ from __future__ import annotations
 
 import abc
 import logging
+from pathlib import Path
 from typing import Any
 
 from src.tools.base import ToolError
+from src.tools.security import validate_path_safe
+from src.tools.shell_tools import FORBIDDEN_PREFIXES
 
 logger = logging.getLogger(__name__)
+
+#: Default cap on the length of a single tool result, in characters. Longer
+#: results are truncated so a huge tool output can't blow the model context.
+DEFAULT_MAX_RESULT_CHARS = 20_000
+
+#: Which tool arguments name file-system paths that must stay inside the
+#: guardrail's allowed base directory. ``run_shell``'s ``work_dir`` is included
+#: so a shell command can't be pointed at a directory outside the base.
+PATH_ARG_NAMES: dict[str, tuple[str, ...]] = {
+    "read_file": ("path",),
+    "write_file": ("path",),
+    "delete_file": ("path",),
+    "move_file": ("source", "dest"),
+    "list_files": ("path",),
+    "search_files": ("path",),
+    "yaml_read": ("path",),
+    "yaml_write": ("path",),
+    "file_index": ("path",),
+    "run_shell": ("work_dir",),
+}
 
 
 # ---------------------------------------------------------------------------
@@ -182,4 +205,73 @@ class SafetyMiddleware(ToolMiddleware):
         result: str,
         exception: BaseException | None,
     ) -> str:
+        return result
+
+
+class GuardrailMiddleware(ToolMiddleware):
+    """A configurable safety-policy layer gating every tool dispatch.
+
+    Before dispatch it blocks dangerous shell commands and any path argument
+    that escapes the allowed base directory; after dispatch it caps oversized
+    results. Because it lives in the shared :class:`ToolPipeline`, it applies
+    to the main agent *and* to sub-agents, which dispatch through the same
+    registry.
+    """
+
+    def __init__(
+        self,
+        work_dir: Path | None = None,
+        *,
+        enabled: bool = True,
+        max_result_chars: int = DEFAULT_MAX_RESULT_CHARS,
+        deny_prefixes: tuple[str, ...] = tuple(FORBIDDEN_PREFIXES),
+    ) -> None:
+        self._work_dir = Path(work_dir).resolve() if work_dir else Path.cwd()
+        self._enabled = enabled
+        self._max_result_chars = max_result_chars
+        self._deny_prefixes = deny_prefixes
+
+    # ------------------------------------------------------------------
+    async def before(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        if not self._enabled:
+            return arguments
+
+        if tool_name == "run_shell":
+            command = arguments.get("command")
+            if isinstance(command, str):
+                self._check_command(command)
+
+        for arg_name in PATH_ARG_NAMES.get(tool_name, ()):
+            value = arguments.get(arg_name)
+            if value is None:
+                continue
+            if isinstance(value, (str, Path)):
+                validate_path_safe(Path(value), self._work_dir)
+
+        return arguments
+
+    def _check_command(self, command: str) -> None:
+        """Raise ``ToolError`` if *command* starts with a denied prefix."""
+        stripped = command.strip().lower()
+        for forbidden in self._deny_prefixes:
+            if stripped.startswith(forbidden):
+                raise ToolError(f"Guardrail blocked command: {forbidden!r} is not allowed.")
+
+    async def after(
+        self,
+        tool_name: str,
+        result: str,
+        exception: BaseException | None,
+    ) -> str:
+        if not self._enabled or self._max_result_chars <= 0 or exception is not None:
+            return result
+        if len(result) > self._max_result_chars:
+            return (
+                result[: self._max_result_chars]
+                + f"\n…[truncated: {len(result)} chars, max {self._max_result_chars}]"
+            )
         return result

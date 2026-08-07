@@ -197,6 +197,7 @@ tests/
 - [x] Streaming responses (text streams live in the CLI as the model generates) with a clean Ctrl-C abort
 - [x] Semantic memory (old turns condensed into a rolling summary, injected as context, persisted per session)
 - [x] Sub-agents (delegate focused, isolated tasks to specialized roles)
+- [x] Agent guardrails (policy layer gating tool calls: path confinement, dangerous commands, output caps)
 
 ## Sessions
 
@@ -368,3 +369,28 @@ Three built-in roles ship with the agent:
 Sub-agent tool calls dispatch through the same tool registry as the main agent,
 so middleware (logging/audit), plugin tools, and MCP tools behave identically
 inside a sub-agent loop.
+
+## Guardrails
+
+A configurable safety-policy layer sits in the tool-dispatch middleware chain
+and gates **every** tool call — from the main agent and from sub-agents alike,
+since both dispatch through the same registry. Before a tool runs it:
+
+- **confines paths** — any file-path argument (`read_file`, `write_file`,
+  `delete_file`, `move_file`, `list_files`, `search_files`, `yaml_read`,
+  `yaml_write`, `file_index`, and `run_shell`'s `work_dir`) must resolve inside
+  the agent's working directory; a `../../etc/passwd`-style escape is blocked
+  with an error fed back to the model, and the call never executes.
+- **blocks dangerous commands** — `run_shell` commands matching a deny-list of
+  prefixes (e.g. `rm -rf /`, `dd if=`, `mkfs`, fork bombs) are rejected before
+  the shell tool's own checks run (defense in depth).
+
+After a tool runs, an oversized result is truncated to `MAX_TOOL_RESULT_CHARS`
+(default 20000) so a single huge output can't blow the model context.
+
+Tune the layer via environment variables:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `GUARDRAILS_ENABLED` | `1` | Set to `0` to disable path/command checks and truncation |
+| `MAX_TOOL_RESULT_CHARS` | `20000` | Cap on a single tool result; `0` disables truncation |

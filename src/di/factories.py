@@ -24,7 +24,12 @@ from src.memory.sqlite_store import DEFAULT_DB_PATH
 from src.memory.summary import ConversationSummarizer
 from src.memory.task_store import TaskStore
 from src.plugins import discover_tools
-from src.tools.middleware import AuditMiddleware, LoggingMiddleware, ToolPipeline
+from src.tools.middleware import (
+    AuditMiddleware,
+    GuardrailMiddleware,
+    LoggingMiddleware,
+    ToolPipeline,
+)
 from src.tools.registry import ToolRegistry
 from src.tools.subagent_tool import SubAgentTool
 
@@ -38,12 +43,22 @@ class AppComponents:
     task_store: ITaskStore
 
 
-def _build_middleware() -> ToolPipeline:
-    """Build the default middleware chain for production."""
+def _build_middleware(settings: Settings) -> ToolPipeline:
+    """Build the default middleware chain for production.
+
+    The guardrail layer runs after logging/audit and gates every dispatch: it
+    blocks path escapes and dangerous shell commands before a tool runs, and
+    caps oversized results afterward.
+    """
     return ToolPipeline(
         middleware=[
             LoggingMiddleware(),
             AuditMiddleware(),
+            GuardrailMiddleware(
+                work_dir=settings.work_dir,
+                enabled=settings.guardrails_enabled,
+                max_result_chars=settings.max_tool_result_chars,
+            ),
         ]
     )
 
@@ -60,7 +75,7 @@ def _build_tool_registry(container: DIContainer, settings: Settings) -> ToolRegi
         work_dir=settings.work_dir,
         safety_level=settings.safety_level,
         extra_tools=extra_tools,
-        pipeline=_build_middleware(),
+        pipeline=_build_middleware(settings),
         task_store=container.resolve(ITaskStore),
         file_index_db=settings.db_path,
     )

@@ -88,3 +88,23 @@ class TestSettings:
         Settings(db_path=db_path)
         assert db_path.parent.exists()
         assert db_path.parent.is_dir()
+
+    def test_guardrails_defaults(self) -> None:
+        s = Settings()
+        assert s.guardrails_enabled is True
+        assert s.max_tool_result_chars == 20_000
+
+    def test_guardrails_env_bool_parsing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GUARDRAILS_ENABLED", "0")
+        assert Settings().guardrails_enabled is False
+
+        monkeypatch.setenv("GUARDRAILS_ENABLED", "true")
+        assert Settings().guardrails_enabled is True
+
+    def test_max_tool_result_chars_negative(self) -> None:
+        with pytest.raises(ValueError, match="MAX_TOOL_RESULT_CHARS must be >= 0"):
+            Settings(max_tool_result_chars=-1)
+
+    def test_max_tool_result_chars_zero_allowed(self) -> None:
+        """0 disables truncation (mirrors MEMORY_SUMMARY_THRESHOLD)."""
+        assert Settings(max_tool_result_chars=0).max_tool_result_chars == 0

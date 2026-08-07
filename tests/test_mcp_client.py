@@ -123,11 +123,13 @@ class TestBuildMCPTools:
         # Spin up TaskFlow's own MCP server (python -m src.mcp) as the remote
         # endpoint, point the client at it, and round-trip a tool call. Uses a
         # temp db and an empty MCP_SERVERS so the server process never tries to
-        # connect to anything itself.
+        # connect to anything itself. AGENT_WORK_DIR confines the server to the
+        # temp workspace (guardrails block tool calls that escape it).
         env = {
             **os.environ,
             "TASKFLOW_DB": str(tmp_path / "db" / "taskflow.db"),
             "MCP_SERVERS": "",
+            "AGENT_WORK_DIR": str(tmp_path),
         }
         server = MCPServerConfig(
             name="taskflow",
