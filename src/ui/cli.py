@@ -20,6 +20,7 @@ from rich.text import Text
 from src.agent.orchestrator import AgentOrchestrator
 from src.interfaces import IMemory, ISessionStore, ITaskStore
 from src.interfaces.task_store import Task
+from src.interfaces.usage import Usage
 
 console = Console()
 
@@ -57,6 +58,7 @@ def print_help() -> None:
     table.add_row("/task", "Manage tasks: create/list/get/update/complete/delete")
     table.add_row("/tasks", "List all tasks")
     table.add_row("/reminders", "Show tasks due or overdue")
+    table.add_row("/usage", "Show cumulative token usage and estimated cost")
     table.add_row("/exit", "Exit the agent")
     console.print(table)
 
@@ -116,12 +118,14 @@ def handle_session_command(
     store: ISessionStore,
     memory: IMemory,
     current: str | None,
+    usage: Usage | None = None,
 ) -> SessionCommandResult:
     """Handle a ``/session ...`` command.
 
     *command* is the text typed after ``/session`` (may be empty). Switching
     commands (``new``/``load``) checkpoint the current conversation to disk
-    before switching, so nothing is lost.
+    before switching, so nothing is lost. The cumulative *usage* is persisted
+    with each save so a session's spend survives restarts.
     """
     parts = command.strip().split()
     if not parts:
@@ -141,7 +145,7 @@ def handle_session_command(
         # Checkpoint the current conversation (and its rolling summary)
         # before switching.
         if current is not None and memory.messages:
-            store.save(current, memory.messages, memory.summary)
+            store.save(current, memory.messages, memory.summary, usage=usage)
         session_name = name or _default_session_name()
         if store.exists(session_name):
             return SessionCommandResult(
@@ -150,7 +154,7 @@ def handle_session_command(
         try:
             # Saving the empty session validates the name early and makes
             # the new (empty) session visible in /sessions.
-            store.save(session_name, [])
+            store.save(session_name, [], usage=usage)
         except ValueError as exc:
             return SessionCommandResult(current, str(exc))
         memory.clear()
@@ -162,7 +166,7 @@ def handle_session_command(
             return SessionCommandResult(current, "Nothing to save — conversation is empty.")
         target = name or current or _default_session_name()
         try:
-            store.save(target, memory.messages, memory.summary)
+            store.save(target, memory.messages, memory.summary, usage=usage)
         except ValueError as exc:
             return SessionCommandResult(current, str(exc))
         return SessionCommandResult(
@@ -173,7 +177,7 @@ def handle_session_command(
         if not name:
             return SessionCommandResult(current, SESSION_USAGE)
         if current is not None and memory.messages:
-            store.save(current, memory.messages, memory.summary)
+            store.save(current, memory.messages, memory.summary, usage=usage)
         try:
             messages = store.load(name)
         except KeyError as exc:
@@ -379,11 +383,45 @@ def _save_session_on_exit(
     store: ISessionStore,
     memory: IMemory,
     current: str | None,
+    usage: Usage | None = None,
 ) -> None:
     """Persist the current conversation (and its summary) before the CLI exits."""
     if current is not None and memory.messages:
-        store.save(current, memory.messages, memory.summary)
+        store.save(current, memory.messages, memory.summary, usage=usage)
         console.print(f"[dim]Saved session '{current}' ({len(memory.messages)} message(s)).[/dim]")
+
+
+# ---------------------------------------------------------------------------
+# Usage display
+# ---------------------------------------------------------------------------
+def _format_tokens(n: int) -> str:
+    """Format a token count compactly, e.g. ``12340`` -> ``"12.3k"``."""
+    if n >= 100_000:
+        return f"{n / 1000:.0f}k"
+    if n >= 1_000:
+        return f"{n / 1000:.1f}k"
+    return str(n)
+
+
+def format_usage_summary(usage: Usage, cost: float) -> str:
+    """Return a compact one-line usage/cost summary (``""`` when idle).
+
+    The line counts billed input (fresh plus cached), cached reads/writes,
+    output, and the estimated cost — e.g.
+    ``⚡ 12.3k in · 0.1k cached-read · 0.2k out · ~$0.0124``.
+    """
+    if usage.total_tokens == 0 and cost <= 0:
+        return ""
+    parts = [f"⚡ {_format_tokens(usage.total_input_tokens)} in"]
+    if usage.cache_read_input_tokens:
+        parts.append(f"{_format_tokens(usage.cache_read_input_tokens)} cached-read")
+    if usage.cache_creation_input_tokens:
+        parts.append(f"{_format_tokens(usage.cache_creation_input_tokens)} cached-write")
+    if usage.output_tokens:
+        parts.append(f"{_format_tokens(usage.output_tokens)} out")
+    if cost > 0:
+        parts.append(f"~${cost:.4f}")
+    return " · ".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -514,7 +552,12 @@ async def run_cli(
         try:
             user_input = Prompt.ask("[bold cyan]You[/bold cyan]")
         except (EOFError, KeyboardInterrupt):
-            _save_session_on_exit(session_store, orchestrator.memory, current_session)
+            _save_session_on_exit(
+                session_store,
+                orchestrator.memory,
+                current_session,
+                usage=orchestrator.usage,
+            )
             console.print("\n[bold yellow]Goodbye![/bold yellow]")
             break
 
@@ -525,7 +568,12 @@ async def run_cli(
         cmd = user_input.strip().lower()
 
         if cmd in ("/exit", "/quit", "exit", "quit"):
-            _save_session_on_exit(session_store, orchestrator.memory, current_session)
+            _save_session_on_exit(
+                session_store,
+                orchestrator.memory,
+                current_session,
+                usage=orchestrator.usage,
+            )
             console.print("[bold yellow]Goodbye![/bold yellow]")
             break
 
@@ -565,6 +613,11 @@ async def run_cli(
             console.print(format_task_list(task_store.due()))
             continue
 
+        if cmd == "/usage":
+            usage_line = format_usage_summary(orchestrator.usage, orchestrator.estimated_cost())
+            console.print(usage_line if usage_line else "[dim]No LLM usage yet.[/dim]")
+            continue
+
         if cmd == "/task" or cmd.startswith("/task "):
             if task_store is None:
                 console.print("[yellow]Tasks are not available in this build.[/yellow]")
@@ -579,6 +632,7 @@ async def run_cli(
                 session_store,
                 orchestrator.memory,
                 current_session,
+                usage=orchestrator.usage,
             )
             if result.session is not None:
                 current_session = result.session
@@ -586,6 +640,8 @@ async def run_cli(
             continue
 
         # --- Normal agent interaction ---
+        before = orchestrator.usage
+        cost_before = orchestrator.estimated_cost()
         try:
             response, streamed = await _run_streamed_turn(orchestrator, user_input, console)
         except KeyboardInterrupt:
@@ -598,6 +654,12 @@ async def run_cli(
         console.print(Rule(style="dim"))
         if _should_print_final(streamed, response):
             console.print(Markdown(response))
+        usage_line = format_usage_summary(
+            orchestrator.usage - before,
+            orchestrator.estimated_cost() - cost_before,
+        )
+        if usage_line:
+            console.print(f"[dim]{usage_line}[/dim]")
         console.print()
 
 

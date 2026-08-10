@@ -73,6 +73,11 @@ class Settings:
         default_factory=lambda: int(os.getenv("MEMORY_SUMMARY_THRESHOLD", "60000"))
     )
 
+    # --- Usage & cost ---
+    max_cost_usd: float = field(
+        default_factory=lambda: float(os.getenv("MAX_COST_USD", "0"))
+    )
+
     # --- Logging ---
     log_level: str = field(default_factory=lambda: os.getenv("AGENT_LOG_LEVEL", "INFO").upper())
     log_file: str = field(default_factory=lambda: os.getenv("AGENT_LOG_FILE", ""))
@@ -108,6 +113,11 @@ def _validate_settings(s: Settings) -> None:
     if s.max_tool_result_chars < 0:
         raise ValueError(
             f"MAX_TOOL_RESULT_CHARS must be >= 0 (0 disables truncation), got {s.max_tool_result_chars}"
+        )
+
+    if s.max_cost_usd < 0:
+        raise ValueError(
+            f"MAX_COST_USD must be >= 0 (0 disables the cap), got {s.max_cost_usd}"
         )
 
     valid_levels = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}

@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from src.interfaces.usage import Usage
+
 
 @dataclass(frozen=True)
 class SessionInfo:
@@ -27,8 +29,9 @@ class ISessionStore(Protocol):
         name: str,
         messages: list[dict[str, Any]],
         summary: str = "",
+        usage: Usage | None = None,
     ) -> None:
-        """Persist *messages* (and the rolling *summary*) under *name*."""
+        """Persist *messages*, the rolling *summary*, and optional *usage*."""
         ...
 
     def load(self, name: str) -> list[dict[str, Any]]:
@@ -40,6 +43,10 @@ class ISessionStore(Protocol):
 
     def load_summary(self, name: str) -> str:
         """Return the rolling summary saved for *name* (``""`` if none)."""
+        ...
+
+    def load_usage(self, name: str) -> Usage | None:
+        """Return the token usage saved for *name* (``None`` if none)."""
         ...
 
     def delete(self, name: str) -> None:

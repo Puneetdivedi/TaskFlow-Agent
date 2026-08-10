@@ -36,6 +36,7 @@ python -m src.main
 | `/task complete <id>` | Mark a task as done (recurring tasks roll to their next due date) |
 | `/task delete <id>` | Delete a task |
 | `/reminders` | Show tasks due or overdue |
+| `/usage` | Show cumulative token usage and estimated cost for this conversation |
 | `/exit` | Exit the agent (auto-saves the current session) |
 
 ## Available Tools
@@ -199,6 +200,7 @@ tests/
 - [x] Sub-agents (delegate focused, isolated tasks to specialized roles)
 - [x] Agent guardrails (policy layer gating tool calls: path confinement, dangerous commands, output caps)
 - [x] Anthropic prompt caching (ephemeral `cache_control` breakpoints on the system prompt and tool definitions)
+- [x] Usage & cost tracking (per-turn and cumulative token/cost display, an optional `MAX_COST_USD` ceiling, and per-session persistence)
 
 ## Sessions
 
@@ -419,3 +421,34 @@ Notes:
 - Verify with a live `ANTHROPIC_API_KEY`: compare the `cache_read_input_tokens`
   field in the API usage across turns — it climbs as prefixes are served from
   cache.
+
+## Usage & Cost Tracking
+
+Every LLM call is counted — input, output, and the prompt-caching counters from
+the previous section (`cache_read` and `cache_creation`) — and the totals are
+rolled up in the shared client. Because the main agent, sub-agents, and the
+summarizer all go through that one client, their spend adds into the same
+numbers.
+
+**Per-turn line.** After each normal turn the CLI prints a dim summary like
+
+```
+⚡ 12.3k in · 0.1k cached-read · 0.2k out · ~$0.0124
+```
+
+**`/usage`.** Shows the conversation's cumulative tokens and estimated cost so
+far.
+
+**`MAX_COST_USD`.** Set a ceiling on the *estimated* spend (0 disables it):
+
+```bash
+MAX_COST_USD=1.00
+```
+
+Once the estimate reaches the cap the agent ends the current turn with a
+"Budget exhausted" message before running any further tools. Costs are derived
+from list prices keyed by model family and are an **estimate** — not a bill.
+
+**Persistence.** Sessions carry their usage: saving via `/session save` (or
+auto-save on exit) records the totals into the shared database, so a
+conversation's spend survives restarts.

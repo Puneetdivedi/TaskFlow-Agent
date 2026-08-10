@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from src.agent.orchestrator import AgentOrchestrator
+from src.interfaces.usage import Usage
 from src.tools.base import ToolError
 
 
@@ -106,6 +107,28 @@ class _InterruptingLLM:
         on_text_delta=None,
     ):
         raise KeyboardInterrupt
+
+
+class _BilledLLM:
+    """LLMClient stub exposing ``usage`` / ``estimated_cost`` like ClaudeClient."""
+
+    def __init__(self, responses: list, usage: Usage, cost: float) -> None:
+        self._responses = list(responses)
+        self.usage = usage
+        self._cost = cost
+
+    async def send_messages(
+        self,
+        messages: list[dict] | None = None,
+        system: str | None = None,
+        tools: list[dict] | None = None,
+    ):
+        if not self._responses:
+            return _end_turn_response("")
+        return self._responses.pop(0)
+
+    def estimated_cost(self) -> float:
+        return self._cost
 
 
 # --- response helpers (duck-type Anthropic Message) ---
@@ -391,3 +414,73 @@ class TestSemanticMemory:
         assert result == "done"
         assert mock_memory.summary == ""
         assert len(mock_memory.messages) == len(long_conv) + 2  # user + assistant
+
+
+class TestUsageAndBudget:
+    """Orchestrator usage accessors and the MAX_COST_USD budget halt."""
+
+    async def test_usage_and_cost_mirror_client(self, mock_memory, mock_tool_registry) -> None:
+        usage = Usage(input_tokens=100, output_tokens=20)
+        llm = _BilledLLM([_end_turn_response("hi")], usage=usage, cost=0.5)
+        orch = _make_orchestrator(llm, mock_memory, mock_tool_registry)
+
+        result = await orch.run("hi")
+
+        assert result == "hi"
+        assert orch.usage == usage
+        assert orch.estimated_cost() == 0.5
+
+    async def test_client_without_usage_degrades_to_empty(
+        self, mock_memory, mock_tool_registry
+    ) -> None:
+        # _ScriptedLLM has no .usage / .estimated_cost — must not crash.
+        llm = _ScriptedLLM([_end_turn_response("ok")])
+        orch = _make_orchestrator(llm, mock_memory, mock_tool_registry)
+
+        result = await orch.run("hi")
+
+        assert result == "ok"
+        assert orch.usage == Usage()
+        assert orch.estimated_cost() == 0.0
+
+    async def test_budget_exhausted_stops_before_tools(
+        self, mock_memory, mock_tool_registry
+    ) -> None:
+        # A tool request sits first in the script — if tools ran, _call_count
+        # would be 1. The budget halt must return before any dispatch.
+        llm = _BilledLLM(
+            [_tool_use_response("read_file", {"path": "x"}, id_="toolu_1")],
+            usage=Usage(input_tokens=1_000_000),
+            cost=3.0,
+        )
+        orch = AgentOrchestrator(
+            llm_client=llm,
+            tools=mock_tool_registry,
+            memory=mock_memory,
+            cost_budget_usd=1.0,
+        )
+
+        result = await orch.run("do it")
+
+        assert "Budget exhausted" in result
+        assert "$1.00 cap" in result
+        assert mock_tool_registry._call_count == 0
+        # the halt message was recorded as the assistant turn
+        assert mock_memory.messages[-1]["role"] == "assistant"
+
+    async def test_budget_zero_disables_cap(self, mock_memory, mock_tool_registry) -> None:
+        llm = _BilledLLM(
+            [_end_turn_response("done")],
+            usage=Usage(input_tokens=1_000_000),
+            cost=3.0,
+        )
+        orch = AgentOrchestrator(
+            llm_client=llm,
+            tools=mock_tool_registry,
+            memory=mock_memory,
+            cost_budget_usd=0.0,
+        )
+
+        result = await orch.run("do it")
+
+        assert result == "done"

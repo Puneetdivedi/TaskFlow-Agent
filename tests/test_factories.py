@@ -169,3 +169,18 @@ class TestCreateProductionApp:
         app.orchestrator.memory.add_user("hi")
         # The session store is independent of conversation memory.
         assert app.session_store.list() == []
+
+    def test_cost_budget_wired_from_settings(self, test_settings: Settings) -> None:
+        app = create_production_app(settings=test_settings)
+        assert app.orchestrator._cost_budget_usd == test_settings.max_cost_usd
+
+    def test_cost_budget_honors_nonzero_setting(self, tmp_path: Path) -> None:
+        settings = Settings(
+            anthropic_api_key="test-key",
+            work_dir=tmp_path,
+            memory_dir=tmp_path / "memory",
+            db_path=tmp_path / "taskflow.db",
+            max_cost_usd=0.25,
+        )
+        app = create_production_app(settings=settings)
+        assert app.orchestrator._cost_budget_usd == 0.25

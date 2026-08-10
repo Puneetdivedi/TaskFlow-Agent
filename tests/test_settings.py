@@ -118,3 +118,19 @@ class TestSettings:
 
         monkeypatch.setenv("PROMPT_CACHING_ENABLED", "yes")
         assert Settings().prompt_caching_enabled is True
+
+
+class TestMaxCostUsd:
+    def test_defaults_to_zero(self) -> None:
+        assert Settings().max_cost_usd == 0.0
+
+    def test_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("MAX_COST_USD", "0.5")
+        assert Settings().max_cost_usd == 0.5
+
+    def test_zero_disables_cap(self) -> None:
+        assert Settings(max_cost_usd=0).max_cost_usd == 0.0
+
+    def test_negative_raises(self) -> None:
+        with pytest.raises(ValueError, match="MAX_COST_USD must be >= 0"):
+            Settings(max_cost_usd=-0.01)
