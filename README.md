@@ -63,6 +63,22 @@ The agent can use these tools to accomplish tasks autonomously:
 | `tasks` | Manage a persistent task list (create/list/get/update/complete/due/delete, due dates + recurrence) |
 | `remember` | Store a durable fact in cross-session memory |
 | `recall` | Search or list remembered facts |
+| `base64_encode` / `base64_decode` | Encode/decode text as base64 (UTF-8) |
+| `url_encode` / `url_decode` | Percent-encode / decode a string for URLs |
+| `uuid4` | Generate a random UUID (version 4) |
+| `hash_text` | Hash a string (md5, sha1, sha224, sha256, sha384, sha512) |
+| `word_count` | Count words, characters, and lines in a string |
+| `json_read` | Read a JSON file and return it as normalized, pretty-printed JSON |
+| `json_write` | Write structured JSON to a file (parses/normalizes, creates parent dirs) |
+| `csv_read` | Read a CSV file as JSON; optional column filter and row cap |
+| `csv_aggregate` | Compute count/sum/avg/min/max over one CSV column |
+| `current_date` | Current date/time, optionally in a named timezone |
+| `date_add` | Add days/weeks/months/years to a date (month arithmetic clamps) |
+| `days_between` | Number of days between two ISO dates |
+| `calculator` | Evaluate a safe math expression (AST-whitelisted, no eval) |
+| `clipboard_read` | Read the current clipboard contents |
+| `clipboard_write` | Copy text to the clipboard |
+| `system_info` | Basic system info (OS, Python, hostname, directories) |
 
 ## MCP Server
 
@@ -144,6 +160,10 @@ src/
 │   ├── memory_tools.py    # Cross-session memory tools (remember/recall)
 │   ├── web_tools.py       # DuckDuckGo search + page fetch (keyless)
 │   ├── yaml_tools.py      # YAML read/write tools
+│   ├── text_tools.py      # Base64/URL encoding, UUIDs, hashing, word counts
+│   ├── data_tools.py      # JSON read/write + CSV read/aggregate tools
+│   ├── datetime_tools.py  # Current time, date arithmetic, days-between
+│   ├── system_tools.py    # Safe calculator, clipboard, system info
 │   ├── middleware.py      # Logging/audit tool pipeline
 │   ├── security.py        # Shell command safety checks
 │   └── registry.py        # Central tool registry + dispatch
@@ -198,6 +218,7 @@ tests/
 - [x] SQLite persistence (tasks, sessions, and file index in one durable database)
 - [x] Web tools (DuckDuckGo search + page fetch — no API key)
 - [x] YAML tools (read/write structured YAML files)
+- [x] Day-to-day utility tools (base64/URL encoding, UUIDs, hashing, word counts, JSON/CSV, date & time, calculator, clipboard, system info)
 - [x] MCP server (expose all tools to any Model Context Protocol client)
 - [x] MCP client (call tools from external MCP servers, configured via env)
 - [x] API error handling (rate limits, timeouts, server errors)
@@ -417,7 +438,8 @@ since both dispatch through the same registry. Before a tool runs it:
 
 - **confines paths** — any file-path argument (`read_file`, `write_file`,
   `delete_file`, `move_file`, `list_files`, `search_files`, `yaml_read`,
-  `yaml_write`, `file_index`, and `run_shell`'s `work_dir`) must resolve inside
+  `yaml_write`, `json_read`, `json_write`, `csv_read`, `csv_aggregate`,
+  `file_index`, and `run_shell`'s `work_dir`) must resolve inside
   the agent's working directory; a `../../etc/passwd`-style escape is blocked
   with an error fed back to the model, and the call never executes.
 - **blocks dangerous commands** — `run_shell` commands matching a deny-list of
@@ -454,13 +476,43 @@ Which calls prompt:
 
 - **Always** — `delete_file`, `move_file`, `run_shell`, and `subagent`
   (destructive or run external code).
-- **On overwrite** — `write_file` and `yaml_write` only when the target file
-  already exists; writing a new file runs unprompted.
+- **On overwrite** — `write_file`, `yaml_write`, and `json_write` only when the
+  target file already exists; writing a new file runs unprompted.
 - Everything else (reads, searches, memory, web tools) runs without prompting.
 
 Denials never leave the turn's single ordered message of tool results, so the
 agent's conversation stays consistent. Set `TOOL_APPROVALS_ENABLED=0` to run
 risky calls without asking (the guardrails layer above still applies).
+
+## Day-to-day utilities
+
+Beyond files, shells, and the web, the agent ships a set of small, common
+helpers grouped into four bundles:
+
+**Text & encoding** — `base64_encode` / `base64_decode`, `url_encode` /
+`url_decode`, `uuid4`, `hash_text` (md5/sha1/sha256/…), and `word_count`. Ask
+"base64-encode this", "make a UUID", "sha256 of my config", or "how many words
+in this paragraph".
+
+**Structured data** — `json_read` / `json_write` parse and re-serialize JSON
+into normalized, pretty-printed form (they validate before writing, and create
+parent directories), and `csv_read` / `csv_aggregate` turn a CSV into JSON rows
+(with an optional column filter and row cap) or compute `count`/`sum`/`avg`/
+`min`/`max` over a column. Like `yaml_read`/`yaml_write`, all four path
+arguments are confined by the guardrails to the working directory.
+
+**Date & time** — `current_date` (any IANA timezone, e.g.
+`America/New_York`, or local), `date_add` (days/weeks/months/years; month
+arithmetic clamps to the target month's length, so Jan 31 + 1 month is
+Feb 28), and `days_between` ("how many days until 2026-12-31?").
+
+**Everyday helpers** — `calculator` evaluates math expressions through a
+strict AST whitelist (`+ - * / // % **`, `pi`/`e`/`tau`, and
+`sqrt`/`log`/`exp`/`round`/`min`/`max`/`floor`/`ceil`) with **no `eval`**;
+`clipboard_read` / `clipboard_write` read and set the system clipboard
+(requires the `pyperclip` package — a missing install returns a clear error,
+never a crash); and `system_info` reports OS, Python version, hostname, and
+working directory without exposing environment variables.
 
 ## Prompt Caching
 

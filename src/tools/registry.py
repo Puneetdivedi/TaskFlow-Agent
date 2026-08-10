@@ -8,6 +8,13 @@ from typing import Any
 
 from src.interfaces.task_store import ITaskStore
 from src.tools.base import Tool, ToolError
+from src.tools.data_tools import (
+    CsvAggregateTool,
+    CsvReadTool,
+    JsonReadTool,
+    JsonWriteTool,
+)
+from src.tools.datetime_tools import CurrentDateTool, DateAddTool, DaysBetweenTool
 from src.tools.file_tools import (
     DeleteFileTool,
     FileIndexTool,
@@ -19,7 +26,22 @@ from src.tools.file_tools import (
 )
 from src.tools.middleware import ToolPipeline
 from src.tools.shell_tools import RunShellTool
+from src.tools.system_tools import (
+    CalculatorTool,
+    ClipboardReadTool,
+    ClipboardWriteTool,
+    SystemInfoTool,
+)
 from src.tools.task_tools import TaskTool
+from src.tools.text_tools import (
+    Base64DecodeTool,
+    Base64EncodeTool,
+    HashTool,
+    UrlDecodeTool,
+    UrlEncodeTool,
+    UuidTool,
+    WordCountTool,
+)
 from src.tools.web_tools import WebFetchTool, WebSearchTool
 from src.tools.yaml_tools import YamlReadTool, YamlWriteTool
 
@@ -66,6 +88,30 @@ class ToolRegistry:
         # --- Built-in YAML tools (structured config/spec read/write) ---
         self.add_tool(YamlReadTool())
         self.add_tool(YamlWriteTool())
+
+        # --- Built-in day-to-day utility tools ---
+        # Text & encoding
+        self.add_tool(Base64EncodeTool())
+        self.add_tool(Base64DecodeTool())
+        self.add_tool(UrlEncodeTool())
+        self.add_tool(UrlDecodeTool())
+        self.add_tool(UuidTool())
+        self.add_tool(HashTool())
+        self.add_tool(WordCountTool())
+        # Structured data
+        self.add_tool(JsonReadTool())
+        self.add_tool(JsonWriteTool())
+        self.add_tool(CsvReadTool())
+        self.add_tool(CsvAggregateTool())
+        # Date & time
+        self.add_tool(CurrentDateTool())
+        self.add_tool(DateAddTool())
+        self.add_tool(DaysBetweenTool())
+        # Everyday helpers
+        self.add_tool(CalculatorTool())
+        self.add_tool(ClipboardReadTool())
+        self.add_tool(ClipboardWriteTool())
+        self.add_tool(SystemInfoTool())
 
         # --- Built-in task tool ---
         if task_store is not None:
