@@ -150,6 +150,7 @@ def create_production_app(settings: Settings | None = None) -> AppComponents:
         tools=container.resolve(IToolRegistry),
         memory=container.resolve(IMemory),
         max_tool_calls=settings.max_tool_calls_per_turn,
+        max_parallel_tool_calls=settings.max_parallel_tool_calls,
         summarizer=summarizer,
         summary_threshold_tokens=settings.summary_threshold_tokens,
         cost_budget_usd=settings.max_cost_usd,

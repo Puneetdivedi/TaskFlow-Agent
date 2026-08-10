@@ -201,6 +201,7 @@ tests/
 - [x] Agent guardrails (policy layer gating tool calls: path confinement, dangerous commands, output caps)
 - [x] Anthropic prompt caching (ephemeral `cache_control` breakpoints on the system prompt and tool definitions)
 - [x] Usage & cost tracking (per-turn and cumulative token/cost display, an optional `MAX_COST_USD` ceiling, and per-session persistence)
+- [x] Parallel tool calls (batched `tool_use` blocks dispatch concurrently up to `MAX_PARALLEL_TOOL_CALLS`)
 
 ## Sessions
 
@@ -452,3 +453,26 @@ from list prices keyed by model family and are an **estimate** — not a bill.
 **Persistence.** Sessions carry their usage: saving via `/session save` (or
 auto-save on exit) records the totals into the shared database, so a
 conversation's spend survives restarts.
+
+## Parallel Tool Calls
+
+When the model returns several independent `tool_use` blocks in one response
+(Anthropic already allows this), they are dispatched **concurrently** instead
+of one after another — independent steps in a task no longer pay the full
+latency of every tool serially.
+
+- The number of tools that may run at once is capped by `MAX_PARALLEL_TOOL_CALLS`
+  (default `5`); setting it to `1` forces sequential execution.
+- All results are recorded back into conversation memory in **block order**, in
+  a single user message — the shape the Messages API requires when a response
+  has several tool calls.
+- A tool that fails becomes an `Error: …` result without cancelling its
+  siblings, so the rest of the batch still completes.
+
+```bash
+# Run up to 8 tools concurrently (default: 5)
+MAX_PARALLEL_TOOL_CALLS=8
+
+# Force sequential execution
+MAX_PARALLEL_TOOL_CALLS=1
+```

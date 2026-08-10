@@ -174,6 +174,21 @@ class TestCreateProductionApp:
         app = create_production_app(settings=test_settings)
         assert app.orchestrator._cost_budget_usd == test_settings.max_cost_usd
 
+    def test_parallel_tool_calls_wired_from_settings(self, test_settings: Settings) -> None:
+        app = create_production_app(settings=test_settings)
+        assert app.orchestrator._max_parallel_tool_calls == test_settings.max_parallel_tool_calls
+
+    def test_parallel_tool_calls_honors_nonzero_setting(self, tmp_path: Path) -> None:
+        settings = Settings(
+            anthropic_api_key="test-key",
+            work_dir=tmp_path,
+            memory_dir=tmp_path / "memory",
+            db_path=tmp_path / "taskflow.db",
+            max_parallel_tool_calls=3,
+        )
+        app = create_production_app(settings=settings)
+        assert app.orchestrator._max_parallel_tool_calls == 3
+
     def test_cost_budget_honors_nonzero_setting(self, tmp_path: Path) -> None:
         settings = Settings(
             anthropic_api_key="test-key",

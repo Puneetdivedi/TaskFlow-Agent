@@ -52,6 +52,19 @@ class _MockMemory:
             }
         )
 
+    def add_tool_results(self, results: list[tuple[str, str]]) -> None:
+        if not results:
+            return
+        self.messages.append(
+            {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": tid, "content": content}
+                    for tid, content in results
+                ],
+            }
+        )
+
     def prune(self) -> None:
         pass
 

@@ -66,6 +66,9 @@ class Settings:
     max_tool_calls_per_turn: int = field(
         default_factory=lambda: int(os.getenv("MAX_TOOL_CALLS", "25"))
     )
+    max_parallel_tool_calls: int = field(
+        default_factory=lambda: int(os.getenv("MAX_PARALLEL_TOOL_CALLS", "5"))
+    )
     max_history_tokens: int = field(
         default_factory=lambda: int(os.getenv("MAX_HISTORY_TOKENS", "100000"))
     )
@@ -101,6 +104,12 @@ def _validate_settings(s: Settings) -> None:
 
     if s.max_tool_calls_per_turn < 1:
         raise ValueError(f"MAX_TOOL_CALLS must be >= 1, got {s.max_tool_calls_per_turn}")
+
+    if s.max_parallel_tool_calls < 1:
+        raise ValueError(
+            f"MAX_PARALLEL_TOOL_CALLS must be >= 1 (1 disables parallelism), "
+            f"got {s.max_parallel_tool_calls}"
+        )
 
     if s.max_history_tokens < 1000:
         raise ValueError(f"MAX_HISTORY_TOKENS must be >= 1000, got {s.max_history_tokens}")

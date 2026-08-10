@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -19,7 +20,6 @@ from src.memory.summary import (
     plan_consolidation,
 )
 from src.memory.tokens import estimate_tokens
-from src.tools.base import ToolError
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +64,7 @@ class AgentOrchestrator:
         memory: IMemory,
         system_prompt: str | None = None,
         max_tool_calls: int = 25,
+        max_parallel_tool_calls: int = 5,
         summarizer: ConversationSummarizer | None = None,
         summary_threshold_tokens: int = 0,
         cost_budget_usd: float = 0.0,
@@ -73,6 +74,7 @@ class AgentOrchestrator:
         self._memory = memory
         self._system_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
         self._max_tool_calls = max_tool_calls
+        self._max_parallel_tool_calls = max_parallel_tool_calls
         self._summarizer = summarizer
         self._summary_threshold_tokens = summary_threshold_tokens
         self._cost_budget_usd = cost_budget_usd
@@ -101,6 +103,21 @@ class AgentOrchestrator:
         """Estimated USD cost of the accumulated usage (0.0 when unknown)."""
         cost = getattr(self._client, "estimated_cost", None)
         return cost() if callable(cost) else 0.0
+
+    # ------------------------------------------------------------------
+    async def _dispatch_safe(self, block: Any) -> tuple[str, str]:
+        """Run one tool and return ``(tool_use_id, result)``.
+
+        Any exception — not just ``ToolError`` — becomes an ``Error: ...``
+        result so a single failing tool can't cancel the concurrent batch or
+        reorder the recorded results.
+        """
+        try:
+            result = await self._tools.dispatch(block.name, block.input)
+        except Exception as exc:  # noqa: BLE001 — isolate tool failures from the gather
+            result = f"Error: {exc}"
+        logger.debug("Tool result for %s: %.500s", block.name, result)
+        return block.id, result
 
     # ------------------------------------------------------------------
     def _system_blocks(self) -> str | list[dict[str, str]]:
@@ -258,28 +275,38 @@ class AgentOrchestrator:
                     self._memory.add_assistant(assistant_content if assistant_content else "")
 
                 # --- Execute each tool call ---
-                for block in tool_blocks:
-                    tool_call_count += 1
-                    logger.info("Dispatching tool: %s with args: %s", block.name, block.input)
-                    if tool_call_count > self._max_tool_calls:
-                        error_msg = (
-                            f"Exceeded max tool calls ({self._max_tool_calls}). "
-                            "Aborting to prevent runaway execution."
+                # Blocks beyond the max_tool_calls budget are rejected up front
+                # with the abort message (the halt still fires after exactly
+                # ``max_tool_calls`` tools have run). The rest dispatch in
+                # chunks of ``max_parallel_tool_calls``; their results are
+                # recorded together, in block order, in a single user message.
+                remaining = self._max_tool_calls - tool_call_count
+                run, aborted = tool_blocks[:remaining], tool_blocks[remaining:]
+
+                if run:
+                    results: list[tuple[str, str]] = []
+                    for start in range(0, len(run), self._max_parallel_tool_calls):
+                        chunk = run[start : start + self._max_parallel_tool_calls]
+                        for block in chunk:
+                            tool_call_count += 1
+                            logger.info(
+                                "Dispatching tool: %s with args: %s", block.name, block.input
+                            )
+                            if on_tool_call is not None:
+                                await on_tool_call(block.name, block.input)
+                        results.extend(
+                            await asyncio.gather(*(self._dispatch_safe(block) for block in chunk))
                         )
-                        logger.warning("Max tool calls exceeded: %d", self._max_tool_calls)
-                        self._memory.add_tool_result(block.id, error_msg)
-                        return error_msg
+                    self._memory.add_tool_results(results)
 
-                    if on_tool_call is not None:
-                        await on_tool_call(block.name, block.input)
-
-                    try:
-                        result = await self._tools.dispatch(block.name, block.input)
-                    except ToolError as exc:
-                        result = f"Error: {exc}"
-
-                    logger.debug("Tool result for %s: %.500s", block.name, result)
-                    self._memory.add_tool_result(block.id, result)
+                if aborted:
+                    error_msg = (
+                        f"Exceeded max tool calls ({self._max_tool_calls}). "
+                        "Aborting to prevent runaway execution."
+                    )
+                    logger.warning("Max tool calls exceeded: %d", self._max_tool_calls)
+                    self._memory.add_tool_results([(block.id, error_msg) for block in aborted])
+                    return error_msg
 
                 # --- Decide whether to stop ---
                 if response.stop_reason == "end_turn":

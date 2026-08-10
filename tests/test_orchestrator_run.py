@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -46,6 +47,53 @@ class _FailingToolRegistry:
 
     async def dispatch(self, name: str, arguments: dict) -> str:
         raise ToolError(f"{name} exploded")
+
+
+class _SelectiveFailingRegistry:
+    """IToolRegistry stub where ``bad_tool`` raises a non-ToolError exception."""
+
+    def __init__(self) -> None:
+        self._ok_count = 0
+
+    @property
+    def tool_names(self) -> list[str]:
+        return ["ok_tool", "bad_tool"]
+
+    def anthropic_tool_defs(self) -> list[dict]:
+        return [
+            {"name": "ok_tool", "description": "", "input_schema": {"type": "object"}},
+            {"name": "bad_tool", "description": "", "input_schema": {"type": "object"}},
+        ]
+
+    async def dispatch(self, name: str, arguments: dict) -> str:
+        if name == "bad_tool":
+            raise ValueError("bad tool exploded")
+        self._ok_count += 1
+        return f"ok:{name}"
+
+
+class _TrackingToolRegistry:
+    """IToolRegistry stub that records peak concurrent in-flight dispatches."""
+
+    def __init__(self) -> None:
+        self._call_count = 0
+        self._in_flight = 0
+        self._peak_in_flight = 0
+
+    @property
+    def tool_names(self) -> list[str]:
+        return ["mock_tool"]
+
+    def anthropic_tool_defs(self) -> list[dict]:
+        return [{"name": "mock_tool", "description": "", "input_schema": {"type": "object"}}]
+
+    async def dispatch(self, name: str, arguments: dict) -> str:
+        self._call_count += 1
+        self._in_flight += 1
+        self._peak_in_flight = max(self._peak_in_flight, self._in_flight)
+        await asyncio.sleep(0.01)  # yield so a concurrent batch actually overlaps
+        self._in_flight -= 1
+        return f"result:{name}"
 
 
 class _FailingLLM:
@@ -140,6 +188,15 @@ def _end_turn_response(text: str = ""):
 def _tool_use_response(name: str, input_: dict, id_: str = "toolu_1"):
     block = SimpleNamespace(type="tool_use", id=id_, name=name, input=input_)
     return SimpleNamespace(content=[block], stop_reason="tool_use")
+
+
+def _multi_tool_use_response(blocks: list[tuple[str, str, dict]]):
+    """A Message with several ``(id, name, input)`` tool_use blocks."""
+    content = [
+        SimpleNamespace(type="tool_use", id=id_, name=name, input=input_)
+        for id_, name, input_ in blocks
+    ]
+    return SimpleNamespace(content=content, stop_reason="tool_use")
 
 
 def _make_orchestrator(llm, memory, tools) -> AgentOrchestrator:
@@ -270,6 +327,148 @@ class TestMaxToolCalls:
             if isinstance(m.get("content"), list) and m["content"][0].get("type") == "tool_result"
         ]
         assert any("Exceeded max tool calls" in m["content"][0]["content"] for m in tool_msgs)
+
+
+class TestParallelToolCalls:
+    async def test_all_blocks_dispatch_in_one_ordered_user_message(
+        self, mock_memory, mock_tool_registry
+    ) -> None:
+        llm = _ScriptedLLM(
+            [
+                _multi_tool_use_response(
+                    [
+                        ("toolu_a", "read_file", {"path": "a.txt"}),
+                        ("toolu_b", "read_file", {"path": "b.txt"}),
+                        ("toolu_c", "read_file", {"path": "c.txt"}),
+                    ]
+                ),
+                _end_turn_response("done"),
+            ]
+        )
+        orch = _make_orchestrator(llm, mock_memory, mock_tool_registry)
+
+        result = await orch.run("read all")
+
+        assert result == "done"
+        assert mock_tool_registry._call_count == 3
+        tool_msgs = [
+            m
+            for m in mock_memory.messages
+            if isinstance(m.get("content"), list) and m["content"][0].get("type") == "tool_result"
+        ]
+        # All three results land in a SINGLE user message, in block order.
+        assert len(tool_msgs) == 1
+        blocks = tool_msgs[0]["content"]
+        assert [b["tool_use_id"] for b in blocks] == ["toolu_a", "toolu_b", "toolu_c"]
+        assert [b["content"] for b in blocks] == ["mock result"] * 3
+
+    async def test_on_tool_call_fires_for_each_block_in_order(
+        self, mock_memory, mock_tool_registry
+    ) -> None:
+        llm = _ScriptedLLM(
+            [
+                _multi_tool_use_response(
+                    [
+                        ("toolu_a", "read_file", {"path": "a.txt"}),
+                        ("toolu_b", "read_file", {"path": "b.txt"}),
+                    ]
+                ),
+                _end_turn_response("done"),
+            ]
+        )
+        orch = _make_orchestrator(llm, mock_memory, mock_tool_registry)
+        calls: list[tuple[str, dict]] = []
+
+        async def sink(name: str, args: dict) -> None:
+            calls.append((name, args))
+
+        result = await orch.run("read", on_tool_call=sink)
+
+        assert result == "done"
+        assert calls == [
+            ("read_file", {"path": "a.txt"}),
+            ("read_file", {"path": "b.txt"}),
+        ]
+
+    async def test_failing_tool_becomes_error_without_cancelling_siblings(
+        self, mock_memory
+    ) -> None:
+        llm = _ScriptedLLM(
+            [
+                _multi_tool_use_response(
+                    [
+                        ("toolu_ok1", "ok_tool", {}),
+                        ("toolu_bad", "bad_tool", {}),
+                        ("toolu_ok2", "ok_tool", {}),
+                    ]
+                ),
+                _end_turn_response("done"),
+            ]
+        )
+        registry = _SelectiveFailingRegistry()
+        orch = _make_orchestrator(llm, mock_memory, registry)
+
+        result = await orch.run("mixed")
+
+        assert result == "done"
+        tool_msgs = [
+            m
+            for m in mock_memory.messages
+            if isinstance(m.get("content"), list) and m["content"][0].get("type") == "tool_result"
+        ]
+        by_id = {b["tool_use_id"]: b["content"] for b in tool_msgs[0]["content"]}
+        assert by_id["toolu_ok1"] == "ok:ok_tool"
+        assert "Error: bad tool exploded" in by_id["toolu_bad"]
+        assert by_id["toolu_ok2"] == "ok:ok_tool"
+        # the failing tool didn't cancel its siblings or crash the turn
+        assert registry._ok_count == 2
+
+    async def test_parallel_cap_limits_concurrent_dispatch(self, mock_memory) -> None:
+        llm = _ScriptedLLM(
+            [
+                _multi_tool_use_response(
+                    [
+                        ("toolu_1", "mock_tool", {}),
+                        ("toolu_2", "mock_tool", {}),
+                        ("toolu_3", "mock_tool", {}),
+                        ("toolu_4", "mock_tool", {}),
+                    ]
+                ),
+                _end_turn_response("done"),
+            ]
+        )
+        registry = _TrackingToolRegistry()
+        orch = _make_orchestrator(llm, mock_memory, registry)
+        orch._max_parallel_tool_calls = 2
+
+        result = await orch.run("parallel")
+
+        assert result == "done"
+        # every block still dispatched, in two chunks of two
+        assert registry._call_count == 4
+        assert registry._peak_in_flight == 2
+
+    async def test_single_block_response_unchanged(self, mock_memory, mock_tool_registry) -> None:
+        """One tool_use block per response behaves exactly as before."""
+        llm = _ScriptedLLM(
+            [
+                _tool_use_response("read_file", {"path": "a.txt"}, id_="toolu_1"),
+                _end_turn_response("I read the file"),
+            ]
+        )
+        orch = _make_orchestrator(llm, mock_memory, mock_tool_registry)
+
+        result = await orch.run("read")
+
+        assert result == "I read the file"
+        assert mock_tool_registry._call_count == 1
+        tool_msgs = [
+            m
+            for m in mock_memory.messages
+            if isinstance(m.get("content"), list) and m["content"][0].get("type") == "tool_result"
+        ]
+        assert len(tool_msgs) == 1
+        assert tool_msgs[0]["content"][0]["tool_use_id"] == "toolu_1"
 
 
 class TestRunStreaming:
