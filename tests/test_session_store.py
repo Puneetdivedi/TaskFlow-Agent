@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from src.interfaces.usage import Usage
 from src.memory.session_store import SessionStore
 
 
@@ -139,3 +140,36 @@ class TestSessionStore:
         for good in ("work", "Work.Dir-1_2", "a" * 64):
             store.save(good, [])
         assert len(store.list()) == 3
+
+
+class TestUsagePersistence:
+    def test_save_usage_roundtrip(self, store: SessionStore) -> None:
+        usage = Usage(
+            input_tokens=100,
+            output_tokens=50,
+            cache_read_input_tokens=10,
+            cache_creation_input_tokens=5,
+        )
+        store.save("work", _sample_messages(), usage=usage)
+        assert store.load_usage("work") == usage
+
+    def test_save_without_usage_returns_none(self, store: SessionStore) -> None:
+        store.save("work", _sample_messages())
+        assert store.load_usage("work") is None
+
+    def test_save_overwrites_usage(self, store: SessionStore) -> None:
+        store.save("work", [], usage=Usage(input_tokens=5))
+        store.save("work", [], usage=Usage(input_tokens=9))
+        assert store.load_usage("work") == Usage(input_tokens=9)
+
+    def test_load_usage_missing_session(self, store: SessionStore) -> None:
+        assert store.load_usage("ghost") is None
+
+    def test_delete_removes_usage(self, store: SessionStore) -> None:
+        store.save("work", [], usage=Usage(input_tokens=5))
+        store.delete("work")
+        assert store.load_usage("work") is None
+
+    def test_load_usage_invalid_name_rejected(self, store: SessionStore) -> None:
+        with pytest.raises(ValueError):
+            store.load_usage("..")

@@ -15,7 +15,13 @@ from pathlib import Path
 from typing import Any
 
 from src.interfaces.session_store import SessionInfo
-from src.memory.sqlite_store import MEMORY_SUMMARIES_SCHEMA, SESSIONS_SCHEMA, SQLiteStore
+from src.interfaces.usage import Usage
+from src.memory.sqlite_store import (
+    MEMORY_SUMMARIES_SCHEMA,
+    SESSION_USAGE_SCHEMA,
+    SESSIONS_SCHEMA,
+    SQLiteStore,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +39,7 @@ class SessionStore(SQLiteStore):
     restored on load.
     """
 
-    _SCHEMA = SESSIONS_SCHEMA + MEMORY_SUMMARIES_SCHEMA
+    _SCHEMA = SESSIONS_SCHEMA + MEMORY_SUMMARIES_SCHEMA + SESSION_USAGE_SCHEMA
 
     def __init__(self, db_path: Path | None = None) -> None:
         super().__init__(db_path)
@@ -56,11 +62,14 @@ class SessionStore(SQLiteStore):
         name: str,
         messages: list[dict[str, Any]],
         summary: str = "",
+        usage: Usage | None = None,
     ) -> None:
-        """Persist *messages* (and the rolling *summary*) under *name*.
+        """Persist *messages*, the rolling *summary*, and optional *usage*.
 
-        Both tables are written in the same transaction, so a session and its
-        summary are always consistent on disk.
+        All tables are written in the same transaction, so a session, its
+        summary, and its cost are always consistent on disk. The usage row is
+        only written when *usage* is provided, so sessions saved without
+        billing data keep ``load_usage`` returning ``None``.
         """
         self._validate_name(name)
         with self._connect() as conn:
@@ -73,6 +82,19 @@ class SessionStore(SQLiteStore):
                 "INSERT OR REPLACE INTO memory_summaries (name, summary) VALUES (?, ?)",
                 (name, summary or ""),
             )
+            if usage is not None:
+                conn.execute(
+                    "INSERT OR REPLACE INTO session_usage "
+                    "(name, input_tokens, output_tokens, cache_read_input_tokens, "
+                    "cache_creation_input_tokens) VALUES (?, ?, ?, ?, ?)",
+                    (
+                        name,
+                        usage.input_tokens,
+                        usage.output_tokens,
+                        usage.cache_read_input_tokens,
+                        usage.cache_creation_input_tokens,
+                    ),
+                )
         logger.info("Saved session %r with %d message(s)", name, len(messages))
 
     def load(self, name: str) -> list[dict[str, Any]]:
@@ -103,8 +125,26 @@ class SessionStore(SQLiteStore):
             ).fetchone()
         return row["summary"] if row is not None else ""
 
+    def load_usage(self, name: str) -> Usage | None:
+        """Return the token usage saved for *name* (``None`` if none)."""
+        self._validate_name(name)
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT input_tokens, output_tokens, cache_read_input_tokens, "
+                "cache_creation_input_tokens FROM session_usage WHERE name = ?",
+                (name,),
+            ).fetchone()
+        if row is None:
+            return None
+        return Usage(
+            input_tokens=row["input_tokens"],
+            output_tokens=row["output_tokens"],
+            cache_read_input_tokens=row["cache_read_input_tokens"],
+            cache_creation_input_tokens=row["cache_creation_input_tokens"],
+        )
+
     def delete(self, name: str) -> None:
-        """Remove the saved session *name* (and its summary).
+        """Remove the saved session *name*, its summary, and its usage.
 
         Raises ``KeyError`` if the session does not exist.
         """
@@ -112,6 +152,7 @@ class SessionStore(SQLiteStore):
         with self._connect() as conn:
             cursor = conn.execute("DELETE FROM sessions WHERE name = ?", (name,))
             conn.execute("DELETE FROM memory_summaries WHERE name = ?", (name,))
+            conn.execute("DELETE FROM session_usage WHERE name = ?", (name,))
         if cursor.rowcount == 0:
             raise KeyError(f"Session {name!r} not found")
         logger.info("Deleted session %r", name)

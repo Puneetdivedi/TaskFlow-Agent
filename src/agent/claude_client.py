@@ -16,6 +16,7 @@ from anthropic import (
 )
 
 from src.interfaces.llm_client import SystemParam, TextDeltaSink
+from src.interfaces.usage import Usage
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,19 @@ class ClaudeClient:
         self._model = model
         self._max_tokens = max_tokens
         self._prompt_caching = prompt_caching
+        #: Cumulative token usage across every call this client makes. Because
+        #: the DI container shares one ClaudeClient between the orchestrator,
+        #: sub-agents, and the summarizer, this captures the whole process.
+        self.usage = Usage()
+
+    # ------------------------------------------------------------------
+    def estimated_cost(self) -> float:
+        """Estimated USD cost of the tokens accumulated in :attr:`usage`.
+
+        The model is known here, so callers never have to supply it — this is
+        what the orchestrator's budget ceiling and the CLI display read.
+        """
+        return self.usage.estimate_cost(self._model)
 
     # ------------------------------------------------------------------
     def _maybe_cache_system(self, system: SystemParam) -> SystemParam:
@@ -117,7 +131,9 @@ class ClaudeClient:
             kwargs["tools"] = self._maybe_cache_tools(tools)
 
         logger.debug("Calling Claude API — model=%s %d messages", self._model, len(messages))
-        return await self._call_with_retry(kwargs)
+        response = await self._call_with_retry(kwargs)
+        self.usage = self.usage.add(Usage.from_response(response))
+        return response
 
     # ------------------------------------------------------------------
     async def stream_messages(
@@ -149,7 +165,9 @@ class ClaudeClient:
             self._model,
             len(messages),
         )
-        return await self._stream_with_retry(kwargs, on_text_delta=on_text_delta)
+        response = await self._stream_with_retry(kwargs, on_text_delta=on_text_delta)
+        self.usage = self.usage.add(Usage.from_response(response))
+        return response
 
     # ------------------------------------------------------------------
     async def _call_with_retry(self, kwargs: dict[str, Any]) -> Any:

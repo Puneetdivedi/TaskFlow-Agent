@@ -13,6 +13,7 @@ from src.interfaces.memory import IMemory
 from src.interfaces.session_store import ISessionStore, SessionInfo
 from src.interfaces.task_store import ITaskStore, Task
 from src.interfaces.tool_registry import IToolRegistry
+from src.interfaces.usage import Usage
 
 __all__ = [
     "IFileIndex",
@@ -25,4 +26,5 @@ __all__ = [
     "Task",
     "TextDeltaSink",
     "ToolCallSink",
+    "Usage",
 ]

@@ -16,13 +16,35 @@ from anthropic import (
 )
 
 from src.agent.claude_client import ClaudeClient, ClaudeClientError
+from src.interfaces.usage import Usage
 
 
-def _message_response() -> SimpleNamespace:
-    """A minimal duck-typed Anthropic ``Message``."""
+def _message_response(usage: Any = None) -> SimpleNamespace:
+    """A minimal duck-typed Anthropic ``Message``.
+
+    *usage* defaults to ``None`` so existing tests keep exercising the
+    no-usage path; usage-accumulation tests pass a billing object.
+    """
     return SimpleNamespace(
         content=[SimpleNamespace(type="text", text="ok")],
         stop_reason="end_turn",
+        usage=usage,
+    )
+
+
+def _usage(
+    *,
+    input: int = 10,
+    output: int = 20,
+    cache_read: int = 0,
+    cache_creation: int = 0,
+) -> SimpleNamespace:
+    """A minimal duck-typed Anthropic ``Message.usage``."""
+    return SimpleNamespace(
+        input_tokens=input,
+        output_tokens=output,
+        cache_read_input_tokens=cache_read,
+        cache_creation_input_tokens=cache_creation,
     )
 
 
@@ -203,9 +225,11 @@ class _FakeStream:
         deltas: list[str],
         *,
         mid_stream_error: Exception | None = None,
+        final_usage: Any = None,
     ) -> None:
         self._deltas = deltas
         self._mid_stream_error = mid_stream_error
+        self._final_usage = final_usage
 
     @property
     def text_stream(self) -> Any:
@@ -218,7 +242,7 @@ class _FakeStream:
         return _gen()
 
     async def get_final_message(self):
-        return _message_response()
+        return _message_response(usage=self._final_usage)
 
 
 class _FakeStreamManager:
@@ -345,3 +369,68 @@ class TestClaudeClientStreaming:
         client = ClaudeClient(api_key="k")
         with pytest.raises(ClaudeClientError, match="Anthropic API error"):
             await client.stream_messages([])
+
+
+class TestUsageAccumulation:
+    """The shared client accumulates ``Usage`` across every LLM call."""
+
+    async def test_usage_starts_empty(self, fake_anthropic) -> None:
+        client = ClaudeClient(api_key="k")
+        assert client.usage == Usage()
+
+    async def test_send_messages_accumulates_and_counts_cache(self, fake_anthropic) -> None:
+        fake_anthropic.messages.create.side_effect = [
+            _message_response(usage=_usage(input=100, output=50, cache_read=10)),
+            _message_response(usage=_usage(input=200, output=5, cache_creation=40)),
+        ]
+        client = ClaudeClient(api_key="k")
+        await client.send_messages([])
+        await client.send_messages([])
+        assert client.usage == Usage(
+            input_tokens=300,
+            output_tokens=55,
+            cache_read_input_tokens=10,
+            cache_creation_input_tokens=40,
+        )
+
+    async def test_stream_accumulates(self, fake_anthropic) -> None:
+        fake_anthropic.messages.stream = MagicMock(
+            return_value=_FakeStreamManager(
+                _FakeStream(["x"], final_usage=_usage(input=50, output=7))
+            )
+        )
+        client = ClaudeClient(api_key="k")
+        await client.stream_messages([])
+        assert client.usage == Usage(input_tokens=50, output_tokens=7)
+
+    async def test_missing_usage_leaves_unchanged(self, fake_anthropic) -> None:
+        fake_anthropic.messages.create.side_effect = [
+            _message_response(usage=_usage(input=5)),
+            _message_response(),  # no usage attribute — must not crash
+        ]
+        client = ClaudeClient(api_key="k")
+        await client.send_messages([])
+        await client.send_messages([])
+        # Only the first (billed) call contributed; the no-usage call added zero.
+        assert client.usage == Usage(input_tokens=5, output_tokens=20)
+
+    async def test_partial_usage_defaults_to_zero(self, fake_anthropic) -> None:
+        fake_anthropic.messages.create.return_value = _message_response(
+            usage=SimpleNamespace(input_tokens=10)
+        )
+        client = ClaudeClient(api_key="k")
+        await client.send_messages([])
+        assert client.usage == Usage(input_tokens=10)
+
+    async def test_estimated_cost_reflects_model(self, fake_anthropic) -> None:
+        client = ClaudeClient(api_key="k", model="claude-sonnet-5-20250611")
+        fake_anthropic.messages.create.return_value = _message_response(
+            usage=_usage(input=1_000_000, output=1_000_000)
+        )
+        await client.send_messages([])
+        # sonnet list prices: $3/M in + $15/M out.
+        assert client.estimated_cost() == pytest.approx(18.0)
+
+    async def test_estimated_cost_zero_before_any_call(self, fake_anthropic) -> None:
+        client = ClaudeClient(api_key="k")
+        assert client.estimated_cost() == 0.0

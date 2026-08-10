@@ -152,6 +152,7 @@ def create_production_app(settings: Settings | None = None) -> AppComponents:
         max_tool_calls=settings.max_tool_calls_per_turn,
         summarizer=summarizer,
         summary_threshold_tokens=settings.summary_threshold_tokens,
+        cost_budget_usd=settings.max_cost_usd,
     )
     return AppComponents(
         orchestrator=orchestrator,

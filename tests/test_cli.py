@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from rich.console import Console
 
+from src.interfaces.usage import Usage
 from src.memory.session_store import SessionStore
 from src.memory.task_store import TaskStore
 from src.ui import cli as cli_module
@@ -17,6 +18,7 @@ from src.ui.cli import (
     format_session_list,
     format_task,
     format_task_list,
+    format_usage_summary,
     handle_session_command,
     handle_task_command,
     newly_due_tasks,
@@ -34,8 +36,16 @@ def store(tmp_path: Path) -> SessionStore:
 class _OrchStub:
     """Minimal orchestrator stand-in exposing only what the CLI loop touches."""
 
-    def __init__(self, memory) -> None:
+    def __init__(self, memory, usage: Usage | None = None) -> None:
         self.memory = memory
+        self._usage = usage if usage is not None else Usage()
+
+    @property
+    def usage(self) -> Usage:
+        return self._usage
+
+    def estimated_cost(self) -> float:
+        return self._usage.estimate_cost(None)
 
 
 def _script_prompt(monkeypatch, answers: list[str]) -> None:
@@ -198,6 +208,26 @@ class TestSessionCommandHandler:
         assert result.session == "work"
         assert store.load_summary("prev") == "CUR"
 
+    def test_save_persists_usage(self, store: SessionStore, mock_memory) -> None:
+        mock_memory.add_user("hello")
+        usage = Usage(input_tokens=100, output_tokens=5)
+        result = handle_session_command("save work", store, mock_memory, None, usage=usage)
+        assert "Saved session 'work'" in result.message
+        assert store.load_usage("work") == usage
+
+    def test_new_checkpoint_persists_usage(self, store: SessionStore, mock_memory) -> None:
+        mock_memory.add_user("hello")
+        usage = Usage(input_tokens=50)
+        result = handle_session_command("new next", store, mock_memory, "prev", usage=usage)
+        assert result.session == "next"
+        assert store.load_usage("prev") == usage
+
+    def test_save_without_usage_keeps_none(self, store: SessionStore, mock_memory) -> None:
+        mock_memory.add_user("hello")
+        result = handle_session_command("save work", store, mock_memory, None)
+        assert result.message
+        assert store.load_usage("work") is None
+
 
 class TestSessionList:
     def test_empty(self, store: SessionStore) -> None:
@@ -210,6 +240,44 @@ class TestSessionList:
         text = format_session_list(store)
         assert "work" in text
         assert "2" in text
+
+
+class TestUsageSummary:
+    def test_zero_returns_empty(self) -> None:
+        assert format_usage_summary(Usage(), 0.0) == ""
+
+    def test_renders_counts_and_cost(self) -> None:
+        usage = Usage(
+            input_tokens=12_340,
+            output_tokens=200,
+            cache_read_input_tokens=100,
+        )
+        text = format_usage_summary(usage, 0.0124)
+        # "in" is the total billed input = fresh + cached reads.
+        assert "12.4k in" in text
+        assert "100 cached-read" in text
+        assert "200 out" in text
+        assert "~$0.0124" in text
+
+    def test_omits_zero_cost(self) -> None:
+        text = format_usage_summary(Usage(input_tokens=100), 0.0)
+        assert "~$" not in text
+
+    def test_omits_cache_when_none(self) -> None:
+        text = format_usage_summary(Usage(input_tokens=100, output_tokens=5), 0.0)
+        assert "cached" not in text
+
+    def test_renders_cached_write_when_present(self) -> None:
+        usage = Usage(input_tokens=100, cache_creation_input_tokens=50)
+        text = format_usage_summary(usage, 0.0)
+        assert "cached-write" in text
+
+    def test_compact_token_formatting(self) -> None:
+        assert cli_module._format_tokens(0) == "0"
+        assert cli_module._format_tokens(999) == "999"
+        assert cli_module._format_tokens(1_000) == "1.0k"
+        assert cli_module._format_tokens(12_340) == "12.3k"
+        assert cli_module._format_tokens(250_000) == "250k"
 
 
 class TestRunCLI:
@@ -243,6 +311,29 @@ class TestRunCLI:
         await cli_module.run_cli(_OrchStub(mock_memory), store)
 
         assert store.exists("demo")
+
+    async def test_session_save_persists_usage_through_loop(
+        self, store: SessionStore, mock_memory, monkeypatch
+    ) -> None:
+        orch = _OrchStub(mock_memory, usage=Usage(input_tokens=250))
+        mock_memory.add_user("hello")
+        # No saved session, so no resume prompt: the first input is the command.
+        _script_prompt(monkeypatch, ["/session save work", "/exit"])
+
+        await cli_module.run_cli(orch, store)
+
+        assert store.load_usage("work") == Usage(input_tokens=250)
+
+    async def test_usage_command_does_not_raise(
+        self, store: SessionStore, mock_memory, monkeypatch
+    ) -> None:
+        orch = _OrchStub(mock_memory, usage=Usage(input_tokens=1_000, output_tokens=100))
+        _script_prompt(monkeypatch, ["/usage", "/exit"])
+
+        await cli_module.run_cli(orch, store)
+
+        # The /usage command renders without touching the agent path.
+        assert store.list() == []
 
     async def test_task_create_dispatches_through_loop(
         self, store: SessionStore, mock_memory, task_store: TaskStore, monkeypatch

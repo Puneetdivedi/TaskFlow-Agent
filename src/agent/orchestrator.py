@@ -12,6 +12,7 @@ from src.interfaces import (
     TextDeltaSink,
     ToolCallSink,
 )
+from src.interfaces.usage import Usage
 from src.memory.summary import (
     ConversationSummarizer,
     format_turns,
@@ -65,6 +66,7 @@ class AgentOrchestrator:
         max_tool_calls: int = 25,
         summarizer: ConversationSummarizer | None = None,
         summary_threshold_tokens: int = 0,
+        cost_budget_usd: float = 0.0,
     ) -> None:
         self._client = llm_client
         self._tools = tools
@@ -73,6 +75,7 @@ class AgentOrchestrator:
         self._max_tool_calls = max_tool_calls
         self._summarizer = summarizer
         self._summary_threshold_tokens = summary_threshold_tokens
+        self._cost_budget_usd = cost_budget_usd
 
     # ------------------------------------------------------------------
     @property
@@ -82,6 +85,22 @@ class AgentOrchestrator:
     @property
     def memory(self) -> IMemory:
         return self._memory
+
+    @property
+    def usage(self) -> Usage:
+        """Cumulative token usage across the process's LLM calls.
+
+        Reads the shared client's accumulator when it exposes one (the
+        production ``ClaudeClient`` does); test doubles without it degrade to
+        an empty ``Usage``.
+        """
+        usage = getattr(self._client, "usage", None)
+        return usage if isinstance(usage, Usage) else Usage()
+
+    def estimated_cost(self) -> float:
+        """Estimated USD cost of the accumulated usage (0.0 when unknown)."""
+        cost = getattr(self._client, "estimated_cost", None)
+        return cost() if callable(cost) else 0.0
 
     # ------------------------------------------------------------------
     def _system_blocks(self) -> str | list[dict[str, str]]:
@@ -199,6 +218,21 @@ class AgentOrchestrator:
                     logger.error("API call failed: %s", exc)
                     self._memory.add_assistant(error_text)
                     return error_text
+
+                # --- Respect the optional cost budget: stop before running tools ---
+                if self._cost_budget_usd > 0 and self.estimated_cost() >= self._cost_budget_usd:
+                    budget_msg = (
+                        f"Budget exhausted — estimated spend "
+                        f"${self.estimated_cost():.4f} has reached the "
+                        f"${self._cost_budget_usd:.2f} cap, so I'm stopping here."
+                    )
+                    logger.warning(
+                        "Cost budget exhausted: $%.4f >= $%.2f",
+                        self.estimated_cost(),
+                        self._cost_budget_usd,
+                    )
+                    self._memory.add_assistant(budget_msg)
+                    return budget_msg
 
                 # --- Build a single assistant response from all content blocks ---
                 assistant_content: list[dict[str, Any]] = []
