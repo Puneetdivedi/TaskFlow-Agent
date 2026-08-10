@@ -62,6 +62,25 @@ class ConversationMemory:
             }
         )
 
+    def add_tool_results(self, results: list[tuple[str, str]]) -> None:
+        """Append one user message carrying all tool_result blocks, in order.
+
+        The Messages API requires every ``tool_use`` in an assistant message to
+        be answered by a *single* user message whose ``tool_result`` blocks
+        appear in the same order — this records them together.
+        """
+        if not results:
+            return
+        self._messages.append(
+            {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": tid, "content": content}
+                    for tid, content in results
+                ],
+            }
+        )
+
     def add_message(self, msg: dict[str, Any]) -> None:
         self._messages.append(msg)
 

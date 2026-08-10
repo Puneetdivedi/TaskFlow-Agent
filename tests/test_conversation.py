@@ -34,6 +34,30 @@ class TestConversationMemory:
         assert msg["content"][0]["tool_use_id"] == "toolu_abc"
         assert msg["content"][0]["content"] == "result content"
 
+    def test_add_tool_results_appends_one_ordered_user_message(self) -> None:
+        mem = ConversationMemory()
+        mem.add_tool_results(
+            [
+                ("toolu_a", "first"),
+                ("toolu_b", "second"),
+                ("toolu_c", "third"),
+            ]
+        )
+        assert len(mem.messages) == 1
+        msg = mem.messages[0]
+        assert msg["role"] == "user"
+        blocks = msg["content"]
+        assert [b["type"] for b in blocks] == ["tool_result"] * 3
+        assert [b["tool_use_id"] for b in blocks] == ["toolu_a", "toolu_b", "toolu_c"]
+        assert [b["content"] for b in blocks] == ["first", "second", "third"]
+
+    def test_add_tool_results_empty_is_noop(self) -> None:
+        mem = ConversationMemory()
+        mem.add_user("hi")
+        before = len(mem.messages)
+        mem.add_tool_results([])
+        assert len(mem.messages) == before
+
     def test_clear(self) -> None:
         mem = ConversationMemory()
         mem.add_user("Hello")

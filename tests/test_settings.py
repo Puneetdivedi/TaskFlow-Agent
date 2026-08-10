@@ -134,3 +134,23 @@ class TestMaxCostUsd:
     def test_negative_raises(self) -> None:
         with pytest.raises(ValueError, match="MAX_COST_USD must be >= 0"):
             Settings(max_cost_usd=-0.01)
+
+
+class TestMaxParallelToolCalls:
+    def test_defaults_to_five(self) -> None:
+        assert Settings().max_parallel_tool_calls == 5
+
+    def test_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("MAX_PARALLEL_TOOL_CALLS", "8")
+        assert Settings().max_parallel_tool_calls == 8
+
+    def test_one_disables_parallelism(self) -> None:
+        assert Settings(max_parallel_tool_calls=1).max_parallel_tool_calls == 1
+
+    def test_zero_raises(self) -> None:
+        with pytest.raises(ValueError, match="MAX_PARALLEL_TOOL_CALLS must be >= 1"):
+            Settings(max_parallel_tool_calls=0)
+
+    def test_negative_raises(self) -> None:
+        with pytest.raises(ValueError, match="MAX_PARALLEL_TOOL_CALLS must be >= 1"):
+            Settings(max_parallel_tool_calls=-3)

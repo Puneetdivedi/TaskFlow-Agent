@@ -34,6 +34,10 @@ class IMemory(Protocol):
         """Append a tool-result payload as a user-style message."""
         ...
 
+    def add_tool_results(self, results: list[tuple[str, str]]) -> None:
+        """Append one user message carrying all tool_result blocks, in order."""
+        ...
+
     def prune(self) -> None:
         """Drop oldest exchanges to stay within a token budget."""
         ...
