@@ -36,6 +36,9 @@ python -m src.main
 | `/task complete <id>` | Mark a task as done (recurring tasks roll to their next due date) |
 | `/task delete <id>` | Delete a task |
 | `/reminders` | Show tasks due or overdue |
+| `/remember <fact>` | Store a durable fact in cross-session memory |
+| `/recall [query]` | Search remembered facts (omit query to list recent) |
+| `/forget <id>` | Delete a remembered fact by id |
 | `/usage` | Show cumulative token usage and estimated cost for this conversation |
 | `/exit` | Exit the agent (auto-saves the current session) |
 
@@ -58,6 +61,8 @@ The agent can use these tools to accomplish tasks autonomously:
 | `yaml_read` | Read a YAML file and return its contents as normalized, canonical YAML |
 | `yaml_write` | Write structured YAML to a file (parses/normalizes content, creates parent dirs) |
 | `tasks` | Manage a persistent task list (create/list/get/update/complete/due/delete, due dates + recurrence) |
+| `remember` | Store a durable fact in cross-session memory |
+| `recall` | Search or list remembered facts |
 
 ## MCP Server
 
@@ -136,21 +141,24 @@ src/
 │   ├── file_tools.py      # Read, Write, List, Search, Move, Delete, FileIndex
 │   ├── shell_tools.py     # RunShell with safety guards
 │   ├── task_tools.py      # Persistent task-management tool
+│   ├── memory_tools.py    # Cross-session memory tools (remember/recall)
 │   ├── web_tools.py       # DuckDuckGo search + page fetch (keyless)
 │   ├── yaml_tools.py      # YAML read/write tools
 │   ├── middleware.py      # Logging/audit tool pipeline
 │   ├── security.py        # Shell command safety checks
 │   └── registry.py        # Central tool registry + dispatch
 ├── memory/
-│   ├── __init__.py        # Exports: ConversationMemory, FileIndex, SessionStore, TaskStore
+│   ├── __init__.py        # Exports: ConversationMemory, FileIndex, SessionStore, TaskStore, FactStore
 │   ├── conversation.py    # Token-aware conversation history with pruning
 │   ├── sqlite_store.py    # Shared SQLite backend + table schemas
 │   ├── migration.py       # One-time legacy JSON → SQLite migration
 │   ├── file_index.py      # Persistent filesystem index (SQLite)
 │   ├── session_store.py   # Named session persistence (SQLite)
-│   └── task_store.py      # Persistent task list (SQLite)
+│   ├── task_store.py      # Persistent task list (SQLite)
+│   └── fact_store.py      # Durable cross-session facts (SQLite)
 ├── interfaces/
 │   ├── __init__.py        # Exports: all protocols + dataclasses
+│   ├── fact_store.py      # IFactStore protocol + Fact dataclass + format_facts
 │   └── task_store.py      # ITaskStore protocol + Task dataclass
 ├── di/
 │   ├── __init__.py
@@ -202,6 +210,7 @@ tests/
 - [x] Anthropic prompt caching (ephemeral `cache_control` breakpoints on the system prompt and tool definitions)
 - [x] Usage & cost tracking (per-turn and cumulative token/cost display, an optional `MAX_COST_USD` ceiling, and per-session persistence)
 - [x] Parallel tool calls (batched `tool_use` blocks dispatch concurrently up to `MAX_PARALLEL_TOOL_CALLS`)
+- [x] Cross-session memory (durable facts persisted in SQLite, injected as context each turn, with `remember`/`recall` tools and `/remember`/`/recall`/`/forget` commands)
 
 ## Sessions
 
@@ -234,6 +243,29 @@ The summary survives session save/load and CLI restarts: `/session save`
 persists it, `/session load` and the resume prompt restore it. Summarization
 is off when no summarizer is wired or when the threshold is `0` — set
 `MEMORY_SUMMARY_THRESHOLD=0` to disable.
+
+## Cross-session Memory
+
+Conversation history and rolling summaries are per-session, but some things
+should be remembered *forever*: a user preference ("I use spaces, not tabs"),
+a project decision, a build command. Durable **facts** are stored in the
+shared SQLite database and survive restarts, named sessions, and renames.
+
+- The agent can **remember and recall its own facts** through the `remember`
+  and `recall` tools — it stores what matters and retrieves it later.
+- The newest `MEMORY_INJECT_FACTS` (default `5`) are injected into the model's
+  system context each turn as a `[Your persistent memory]` block, so the agent
+  *knows* them without being asked. Set `MEMORY_INJECT_FACTS=0` to disable
+  injection (facts are still stored and searchable).
+- Manage facts directly from the CLI:
+
+  - `/remember <fact>` — store a fact (e.g. `/remember user prefers spaces`)
+  - `/recall [query]` — search facts; omit the query to list the most recent
+  - `/forget <id>` — delete a fact by id (as shown by `/recall`)
+
+Facts live in the same shared SQLite database (`~/.taskflow/taskflow.db`,
+override with `TASKFLOW_DB`), so they are consistent across the CLI, MCP, and
+every session.
 
 ## Tasks
 
@@ -272,8 +304,9 @@ Set these in `.env` (copy from `.env.example`):
 | `ANTHROPIC_MODEL` | `claude-sonnet-5-20250611` | Model to use |
 | `SAFETY_LEVEL` | `1` | Permission tier (0–3) |
 | `AGENT_WORK_DIR` | `.` | Working directory for the agent |
-| `TASKFLOW_DB` | `~/.taskflow/taskflow.db` | Shared SQLite database (tasks, sessions, file index) |
+| `TASKFLOW_DB` | `~/.taskflow/taskflow.db` | Shared SQLite database (tasks, sessions, file index, facts) |
 | `MCP_SERVERS` | — | JSON config of external MCP servers to call (see [MCP Client](#mcp-client)) |
+| `MEMORY_INJECT_FACTS` | `5` | Newest durable facts injected as context each turn (`0` disables injection) |
 
 Web tools (`web_search` / `web_fetch`) are always available and use baked-in
 defaults (15s timeout); no configuration required.

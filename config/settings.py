@@ -75,6 +75,9 @@ class Settings:
     summary_threshold_tokens: int = field(
         default_factory=lambda: int(os.getenv("MEMORY_SUMMARY_THRESHOLD", "60000"))
     )
+    memory_inject_facts: int = field(
+        default_factory=lambda: int(os.getenv("MEMORY_INJECT_FACTS", "5"))
+    )
 
     # --- Usage & cost ---
     max_cost_usd: float = field(
@@ -117,6 +120,12 @@ def _validate_settings(s: Settings) -> None:
     if s.summary_threshold_tokens < 0:
         raise ValueError(
             f"MEMORY_SUMMARY_THRESHOLD must be >= 0 (0 disables), got {s.summary_threshold_tokens}"
+        )
+
+    if s.memory_inject_facts < 0:
+        raise ValueError(
+            f"MEMORY_INJECT_FACTS must be >= 0 (0 disables injection), "
+            f"got {s.memory_inject_facts}"
         )
 
     if s.max_tool_result_chars < 0:

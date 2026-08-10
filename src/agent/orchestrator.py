@@ -7,6 +7,7 @@ import logging
 from typing import Any
 
 from src.interfaces import (
+    IFactStore,
     IMemory,
     IToolRegistry,
     LLMClient,
@@ -68,6 +69,8 @@ class AgentOrchestrator:
         summarizer: ConversationSummarizer | None = None,
         summary_threshold_tokens: int = 0,
         cost_budget_usd: float = 0.0,
+        fact_store: IFactStore | None = None,
+        memory_inject_facts: int = 5,
     ) -> None:
         self._client = llm_client
         self._tools = tools
@@ -78,6 +81,8 @@ class AgentOrchestrator:
         self._summarizer = summarizer
         self._summary_threshold_tokens = summary_threshold_tokens
         self._cost_budget_usd = cost_budget_usd
+        self._fact_store = fact_store
+        self._memory_inject_facts = memory_inject_facts
 
     # ------------------------------------------------------------------
     @property
@@ -120,27 +125,46 @@ class AgentOrchestrator:
         return block.id, result
 
     # ------------------------------------------------------------------
+    def _memory_facts(self) -> str:
+        """Render the newest durable facts as a system block (``''`` if none)."""
+        if self._fact_store is None or self._memory_inject_facts <= 0:
+            return ""
+        facts = self._fact_store.list(limit=self._memory_inject_facts)
+        if not facts:
+            return ""
+        lines = [f"- {fact.topic + ': ' if fact.topic else ''}{fact.content}" for fact in facts]
+        return "[Your persistent memory]\n" + "\n".join(lines)
+
     def _system_blocks(self) -> str | list[dict[str, str]]:
         """Return the ``system`` argument for LLM calls.
 
-        A plain string (the base prompt) when there is no rolling summary;
-        otherwise a block list that injects the summary ahead of the base
-        prompt, e.g.::
+        A plain string (the base prompt) when there is nothing to inject;
+        otherwise a block list that prepends the persistent-memory facts and
+        any rolling summary ahead of the base prompt, e.g.::
 
-            [{"type": "text", "text": "[Summary of earlier conversation]\\n..."},
+            [{"type": "text", "text": "[Your persistent memory]\\n- ..."},
+             {"type": "text", "text": "[Summary of earlier conversation]\\n..."},
              {"type": "text", "text": "<base prompt>"}]
 
-        The Anthropic API accepts both forms.
+        The last block is always the base prompt so prompt-caching breakpoints
+        are unaffected. The Anthropic API accepts both forms.
         """
-        if not self._memory.summary:
+        blocks: list[dict[str, str]] = []
+
+        facts_text = self._memory_facts()
+        if facts_text:
+            blocks.append({"type": "text", "text": facts_text})
+        if self._memory.summary:
+            blocks.append(
+                {
+                    "type": "text",
+                    "text": f"[Summary of earlier conversation]\n{self._memory.summary}",
+                }
+            )
+        if not blocks:
             return self._system_prompt
-        return [
-            {
-                "type": "text",
-                "text": f"[Summary of earlier conversation]\n{self._memory.summary}",
-            },
-            {"type": "text", "text": self._system_prompt},
-        ]
+        blocks.append({"type": "text", "text": self._system_prompt})
+        return blocks
 
     async def _maybe_consolidate(self) -> None:
         """Condense old turns into a rolling summary once the conversation

@@ -10,6 +10,7 @@ import pytest
 from rich.console import Console
 
 from src.interfaces.usage import Usage
+from src.memory.fact_store import FactStore
 from src.memory.session_store import SessionStore
 from src.memory.task_store import TaskStore
 from src.ui import cli as cli_module
@@ -19,6 +20,9 @@ from src.ui.cli import (
     format_task,
     format_task_list,
     format_usage_summary,
+    handle_forget_command,
+    handle_recall_command,
+    handle_remember_command,
     handle_session_command,
     handle_task_command,
     newly_due_tasks,
@@ -423,6 +427,92 @@ class TestRunCLI:
         task = task_store.get("t1")
         assert task.status == "todo"  # rolled, not done
         assert task.due_at == "2026-08-17"
+
+    async def test_remember_dispatches_through_loop(
+        self, store: SessionStore, mock_memory, fact_store: FactStore, monkeypatch
+    ) -> None:
+        _script_prompt(monkeypatch, ["/remember user prefers spaces", "/exit"])
+
+        await cli_module.run_cli(_OrchStub(mock_memory), store, fact_store=fact_store)
+
+        assert fact_store.get("f1").content == "user prefers spaces"
+
+    async def test_recall_dispatches_through_loop(
+        self, store: SessionStore, mock_memory, fact_store: FactStore, monkeypatch
+    ) -> None:
+        fact_store.add("User prefers spaces")
+        _script_prompt(monkeypatch, ["/recall spaces", "/exit"])
+
+        await cli_module.run_cli(_OrchStub(mock_memory), store, fact_store=fact_store)
+
+        assert len(fact_store.list()) == 1  # listing does not mutate
+
+    async def test_forget_dispatches_through_loop(
+        self, store: SessionStore, mock_memory, fact_store: FactStore, monkeypatch
+    ) -> None:
+        fact_store.add("User prefers spaces")
+        _script_prompt(monkeypatch, ["/forget f1", "/exit"])
+
+        await cli_module.run_cli(_OrchStub(mock_memory), store, fact_store=fact_store)
+
+        assert fact_store.list() == []
+
+    async def test_memory_unavailable_without_fact_store(
+        self, store: SessionStore, mock_memory, monkeypatch
+    ) -> None:
+        _script_prompt(monkeypatch, ["/remember x", "/exit"])
+
+        await cli_module.run_cli(_OrchStub(mock_memory), store)
+
+        # No exception: the guard must short-circuit before the agent path.
+
+
+class TestMemoryCommandHandler:
+    def test_remember_stores_fact(self, fact_store: FactStore) -> None:
+        result = handle_remember_command("User prefers spaces", fact_store)
+        assert "Remembered fact f1: User prefers spaces" in result
+        assert fact_store.get("f1").content == "User prefers spaces"
+
+    def test_remember_strips_whitespace(self, fact_store: FactStore) -> None:
+        result = handle_remember_command("  hello  ", fact_store)
+        assert "hello" in result
+
+    def test_remember_empty_input(self, fact_store: FactStore) -> None:
+        result = handle_remember_command("", fact_store)
+        assert "Nothing to remember" in result
+        assert fact_store.list() == []
+
+    def test_recall_lists_recent(self, fact_store: FactStore) -> None:
+        fact_store.add("First")
+        fact_store.add("Second")
+        result = handle_recall_command("", fact_store)
+        assert "2 memories:" in result
+        assert "f2" in result
+        assert "f1" in result
+
+    def test_recall_searches_query(self, fact_store: FactStore) -> None:
+        fact_store.add("User prefers spaces")
+        fact_store.add("Deploy via pip")
+        result = handle_recall_command("spaces", fact_store)
+        assert "f1" in result
+        assert "pip" not in result
+
+    def test_recall_empty_store(self, fact_store: FactStore) -> None:
+        assert handle_recall_command("", fact_store) == "No memories found."
+
+    def test_forget_removes_fact(self, fact_store: FactStore) -> None:
+        fact_store.add("First")
+        result = handle_forget_command("f1", fact_store)
+        assert "Forgot memory f1." in result
+        assert fact_store.list() == []
+
+    def test_forget_missing_id(self, fact_store: FactStore) -> None:
+        result = handle_forget_command("f99", fact_store)
+        assert "not found" in result
+
+    def test_forget_empty_input(self, fact_store: FactStore) -> None:
+        result = handle_forget_command("", fact_store)
+        assert "Memory id required" in result
 
 
 class TestTaskCommandHandler:

@@ -18,7 +18,7 @@ from rich.table import Table
 from rich.text import Text
 
 from src.agent.orchestrator import AgentOrchestrator
-from src.interfaces import IMemory, ISessionStore, ITaskStore
+from src.interfaces import IFactStore, IMemory, ISessionStore, ITaskStore, format_facts
 from src.interfaces.task_store import Task
 from src.interfaces.usage import Usage
 
@@ -40,6 +40,8 @@ TASK_USAGE = (
     "due_at (ISO-8601, e.g. 2026-08-10), every_days (0 = not recurring)"
 )
 
+MEMORY_USAGE = "Usage: /remember <fact>\n       /recall [query]\n       /forget <id>"
+
 
 def print_banner() -> None:
     console.print(BANNER, style="bold cyan")
@@ -59,6 +61,9 @@ def print_help() -> None:
     table.add_row("/tasks", "List all tasks")
     table.add_row("/reminders", "Show tasks due or overdue")
     table.add_row("/usage", "Show cumulative token usage and estimated cost")
+    table.add_row("/remember", "Store a durable fact in cross-session memory")
+    table.add_row("/recall", "Search or list remembered facts")
+    table.add_row("/forget", "Delete a remembered fact by id")
     table.add_row("/exit", "Exit the agent")
     console.print(table)
 
@@ -392,6 +397,47 @@ def _save_session_on_exit(
 
 
 # ---------------------------------------------------------------------------
+# Memory commands
+# ---------------------------------------------------------------------------
+def handle_remember_command(command: str, store: IFactStore) -> str:
+    """Handle a ``/remember ...`` command (*command* is text after the prefix)."""
+    content = command.strip()
+    if not content:
+        return f"Nothing to remember.\n{MEMORY_USAGE}"
+    try:
+        fact = store.add(content)
+    except ValueError as exc:
+        return str(exc)
+    return f"Remembered fact {fact.id}: {fact.content}"
+
+
+def handle_recall_command(command: str, store: IFactStore) -> str:
+    """Handle a ``/recall ...`` command (*command* is text after the prefix).
+
+    A query searches content/topic; without one the 10 most recent facts
+    are listed.
+    """
+    query = command.strip()
+    try:
+        facts = store.search(query) if query else store.list(limit=10)
+    except ValueError as exc:
+        return str(exc)
+    return format_facts(facts)
+
+
+def handle_forget_command(command: str, store: IFactStore) -> str:
+    """Handle a ``/forget ...`` command (*command* is text after the prefix)."""
+    fact_id = command.strip()
+    if not fact_id:
+        return f"Memory id required.\n{MEMORY_USAGE}"
+    try:
+        store.delete(fact_id)
+    except KeyError as exc:
+        return str(exc)
+    return f"Forgot memory {fact_id}."
+
+
+# ---------------------------------------------------------------------------
 # Usage display
 # ---------------------------------------------------------------------------
 def _format_tokens(n: int) -> str:
@@ -504,6 +550,7 @@ async def run_cli(
     orchestrator: AgentOrchestrator,
     session_store: ISessionStore,
     task_store: ITaskStore | None = None,
+    fact_store: IFactStore | None = None,
 ) -> None:
     """Main interactive loop."""
     print_banner()
@@ -639,6 +686,24 @@ async def run_cli(
             console.print(result.message)
             continue
 
+        if fact_store is not None:
+            if cmd == "/remember" or cmd.startswith("/remember "):
+                console.print(handle_remember_command(user_input[len("/remember") :], fact_store))
+                continue
+
+            if cmd == "/recall" or cmd.startswith("/recall "):
+                console.print(handle_recall_command(user_input[len("/recall") :], fact_store))
+                continue
+
+            if cmd == "/forget" or cmd.startswith("/forget "):
+                console.print(handle_forget_command(user_input[len("/forget") :], fact_store))
+                continue
+        elif cmd in ("/remember", "/recall", "/forget") or any(
+            cmd.startswith(f"/{name} ") for name in ("remember", "recall", "forget")
+        ):
+            console.print("[yellow]Cross-session memory is not available in this build.[/yellow]")
+            continue
+
         # --- Normal agent interaction ---
         before = orchestrator.usage
         cost_before = orchestrator.estimated_cost()
@@ -684,7 +749,7 @@ def main() -> None:
 
     app = create_production_app(settings=settings)
 
-    asyncio.run(run_cli(app.orchestrator, app.session_store, app.task_store))
+    asyncio.run(run_cli(app.orchestrator, app.session_store, app.task_store, app.fact_store))
 
 
 if __name__ == "__main__":

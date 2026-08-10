@@ -17,8 +17,16 @@ from src.di.factories import (
     create_production_orchestrator,
     register_defaults,
 )
-from src.interfaces import IMemory, ISessionStore, ITaskStore, IToolRegistry, LLMClient
+from src.interfaces import (
+    IFactStore,
+    IMemory,
+    ISessionStore,
+    ITaskStore,
+    IToolRegistry,
+    LLMClient,
+)
 from src.memory.conversation import ConversationMemory
+from src.memory.fact_store import FactStore
 from src.memory.session_store import SessionStore
 from src.memory.task_store import TaskStore
 from src.tools.base import Tool, ToolError
@@ -199,3 +207,42 @@ class TestCreateProductionApp:
         )
         app = create_production_app(settings=settings)
         assert app.orchestrator._cost_budget_usd == 0.25
+
+
+class TestMemoryWiring:
+    def test_fact_store_resolves_to_configured_db(self, test_settings: Settings) -> None:
+        container = DIContainer()
+        register_defaults(container, test_settings)
+
+        store: FactStore = container.resolve(IFactStore)
+        assert isinstance(store, FactStore)
+        assert store._db_path == test_settings.db_path
+
+    def test_registry_includes_memory_tools(self, test_settings: Settings) -> None:
+        container = DIContainer()
+        register_defaults(container, test_settings)
+
+        registry: ToolRegistry = container.resolve(IToolRegistry)
+        assert "remember" in registry.tool_names
+        assert "recall" in registry.tool_names
+
+    def test_app_returns_fact_store(self, test_settings: Settings) -> None:
+        app = create_production_app(settings=test_settings)
+        assert isinstance(app.fact_store, FactStore)
+        assert app.fact_store._db_path == test_settings.db_path
+
+    def test_orchestrator_receives_fact_store_and_inject(self, test_settings: Settings) -> None:
+        app = create_production_app(settings=test_settings)
+        assert app.orchestrator._fact_store is app.fact_store
+        assert app.orchestrator._memory_inject_facts == test_settings.memory_inject_facts
+
+    def test_memory_inject_facts_honors_nonzero_setting(self, tmp_path: Path) -> None:
+        settings = Settings(
+            anthropic_api_key="test-key",
+            work_dir=tmp_path,
+            memory_dir=tmp_path / "memory",
+            db_path=tmp_path / "taskflow.db",
+            memory_inject_facts=3,
+        )
+        app = create_production_app(settings=settings)
+        assert app.orchestrator._memory_inject_facts == 3
