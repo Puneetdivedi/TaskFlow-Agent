@@ -170,3 +170,16 @@ class TestMemoryInjectFacts:
     def test_negative_raises(self) -> None:
         with pytest.raises(ValueError, match="MEMORY_INJECT_FACTS must be >= 0"):
             Settings(memory_inject_facts=-1)
+
+
+class TestToolApprovalsEnabled:
+    def test_defaults_to_enabled(self) -> None:
+        assert Settings().tool_approvals_enabled is True
+
+    def test_env_false_parsing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("TOOL_APPROVALS_ENABLED", "0")
+        assert Settings().tool_approvals_enabled is False
+
+    def test_env_true_parsing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("TOOL_APPROVALS_ENABLED", "yes")
+        assert Settings().tool_approvals_enabled is True

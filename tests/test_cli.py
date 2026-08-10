@@ -748,8 +748,12 @@ class TestReminderHelpers:
 class _StubStreamOrch:
     """Orchestrator stand-in that drives its streaming callbacks."""
 
-    async def run(self, user_input, *, on_text_delta=None, on_tool_call=None):
+    def __init__(self) -> None:
+        self.last_approver = None
+
+    async def run(self, user_input, *, on_text_delta=None, on_tool_call=None, tool_approver=None):
         assert user_input == "hello"
+        self.last_approver = tool_approver
         await on_text_delta("Hel")
         await on_text_delta("lo")
         await on_tool_call("read_file", {"path": "a.txt"})
@@ -794,3 +798,24 @@ class TestStreamingHelpers:
         # both the streamed text and the tool-call line reached the panel
         assert "Hello there" in rendered
         assert "read_file" in rendered
+
+    async def test_run_streamed_turn_builds_approver_when_enabled(self) -> None:
+        buffer = io.StringIO()
+        console = Console(file=buffer, width=100)
+        orch = _StubStreamOrch()
+
+        final, _ = await cli_module._run_streamed_turn(
+            orch, "hello", console, approvals_enabled=True
+        )
+
+        assert final == "Hello there"
+        assert orch.last_approver is not None
+
+    async def test_run_streamed_turn_no_approver_when_disabled(self) -> None:
+        buffer = io.StringIO()
+        console = Console(file=buffer, width=100)
+        orch = _StubStreamOrch()
+
+        await cli_module._run_streamed_turn(orch, "hello", console)
+
+        assert orch.last_approver is None

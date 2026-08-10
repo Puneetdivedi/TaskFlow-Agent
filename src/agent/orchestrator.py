@@ -12,6 +12,7 @@ from src.interfaces import (
     IToolRegistry,
     LLMClient,
     TextDeltaSink,
+    ToolApprover,
     ToolCallSink,
 )
 from src.interfaces.usage import Usage
@@ -210,16 +211,20 @@ class AgentOrchestrator:
         *,
         on_text_delta: TextDeltaSink | None = None,
         on_tool_call: ToolCallSink | None = None,
+        tool_approver: ToolApprover | None = None,
     ) -> str:
         """Process a single user request through the full tool-calling loop.
 
         When *on_text_delta* is provided the assistant's text is streamed
         through it as the model generates it; otherwise the whole response
         arrives at once. *on_tool_call* (if given) is awaited with
-        ``(name, args)`` immediately before each tool runs. On
-        ``KeyboardInterrupt`` the turn's conversation changes are rolled
-        back before the interrupt propagates, so an aborted turn leaves
-        memory clean.
+        ``(name, args)`` immediately before each tool runs. *tool_approver*
+        (if given) is awaited with ``(name, args)`` for every call: returning
+        ``None`` allows the call to run, while a ``str`` denial blocks it and
+        is reported back to the model as a plain ``tool_result`` so the agent
+        can adapt. On ``KeyboardInterrupt`` the turn's conversation changes
+        are rolled back before the interrupt propagates, so an aborted turn
+        leaves memory clean.
 
         Returns the final assistant response string.
         """
@@ -311,16 +316,30 @@ class AgentOrchestrator:
                     results: list[tuple[str, str]] = []
                     for start in range(0, len(run), self._max_parallel_tool_calls):
                         chunk = run[start : start + self._max_parallel_tool_calls]
-                        for block in chunk:
+                        allowed: list[tuple[Any, int]] = []
+                        by_pos: dict[int, tuple[str, str]] = {}
+                        for pos, block in enumerate(chunk):
                             tool_call_count += 1
-                            logger.info(
-                                "Dispatching tool: %s with args: %s", block.name, block.input
-                            )
+                            logger.info("Tool call: %s with args: %s", block.name, block.input)
                             if on_tool_call is not None:
                                 await on_tool_call(block.name, block.input)
-                        results.extend(
-                            await asyncio.gather(*(self._dispatch_safe(block) for block in chunk))
-                        )
+                            denial: str | None = None
+                            if tool_approver is not None:
+                                denial = await tool_approver(block.name, block.input)
+                            if denial is None:
+                                allowed.append((block, pos))
+                            else:
+                                by_pos[pos] = (
+                                    block.id,
+                                    f"User denied the {block.name} tool call: {denial}",
+                                )
+                        if allowed:
+                            dispatched = await asyncio.gather(
+                                *(self._dispatch_safe(block) for block, _ in allowed)
+                            )
+                            for (_, pos), result in zip(allowed, dispatched):
+                                by_pos[pos] = result
+                        results.extend(by_pos[pos] for pos in range(len(chunk)))
                     self._memory.add_tool_results(results)
 
                 if aborted:
