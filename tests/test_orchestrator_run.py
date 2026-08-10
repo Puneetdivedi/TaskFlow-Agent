@@ -9,6 +9,7 @@ import pytest
 
 from src.agent.orchestrator import AgentOrchestrator
 from src.interfaces.usage import Usage
+from src.memory.fact_store import FactStore
 from src.tools.base import ToolError
 
 
@@ -613,6 +614,132 @@ class TestSemanticMemory:
         assert result == "done"
         assert mock_memory.summary == ""
         assert len(mock_memory.messages) == len(long_conv) + 2  # user + assistant
+
+
+class TestMemoryInjection:
+    """Cross-session facts are injected as a system block when configured."""
+
+    async def test_no_fact_store_uses_plain_system(self, mock_memory, mock_tool_registry) -> None:
+        llm = _ScriptedLLM([_end_turn_response("ok")])
+        orch = _make_orchestrator(llm, mock_memory, mock_tool_registry)
+
+        await orch.run("hi")
+
+        assert isinstance(llm.received_systems[0], str)
+
+    async def test_empty_fact_store_uses_plain_system(
+        self, mock_memory, mock_tool_registry, tmp_path
+    ) -> None:
+        store = FactStore(db_path=tmp_path / "facts.db")
+        llm = _ScriptedLLM([_end_turn_response("ok")])
+        orch = AgentOrchestrator(
+            llm_client=llm,
+            tools=mock_tool_registry,
+            memory=mock_memory,
+            fact_store=store,
+            memory_inject_facts=5,
+        )
+
+        await orch.run("hi")
+
+        assert isinstance(llm.received_systems[0], str)
+
+    async def test_inject_zero_uses_plain_system(
+        self, mock_memory, mock_tool_registry, tmp_path
+    ) -> None:
+        store = FactStore(db_path=tmp_path / "facts.db")
+        store.add("persistent fact")
+        llm = _ScriptedLLM([_end_turn_response("ok")])
+        orch = AgentOrchestrator(
+            llm_client=llm,
+            tools=mock_tool_registry,
+            memory=mock_memory,
+            fact_store=store,
+            memory_inject_facts=0,
+        )
+
+        await orch.run("hi")
+
+        assert isinstance(llm.received_systems[0], str)
+
+    async def test_facts_block_prepended(self, mock_memory, mock_tool_registry, tmp_path) -> None:
+        store = FactStore(db_path=tmp_path / "facts.db")
+        store.add("User prefers spaces")
+        llm = _ScriptedLLM([_end_turn_response("ok")])
+        orch = AgentOrchestrator(
+            llm_client=llm,
+            tools=mock_tool_registry,
+            memory=mock_memory,
+            fact_store=store,
+            memory_inject_facts=5,
+        )
+
+        await orch.run("hi")
+
+        injected = llm.received_systems[0]
+        assert isinstance(injected, list)
+        assert injected[0]["text"].startswith("[Your persistent memory]")
+        assert "User prefers spaces" in injected[0]["text"]
+        assert injected[-1]["text"]  # base prompt stays last
+
+    async def test_facts_newest_first(self, mock_memory, mock_tool_registry, tmp_path) -> None:
+        store = FactStore(db_path=tmp_path / "facts.db")
+        store.add("older fact")
+        store.add("newer fact")
+        llm = _ScriptedLLM([_end_turn_response("ok")])
+        orch = AgentOrchestrator(
+            llm_client=llm,
+            tools=mock_tool_registry,
+            memory=mock_memory,
+            fact_store=store,
+            memory_inject_facts=5,
+        )
+
+        await orch.run("hi")
+
+        text = llm.received_systems[0][0]["text"]
+        assert text.index("newer fact") < text.index("older fact")
+
+    async def test_inject_limit_caps_facts(self, mock_memory, mock_tool_registry, tmp_path) -> None:
+        store = FactStore(db_path=tmp_path / "facts.db")
+        for i in range(5):
+            store.add(f"fact {i}")
+        llm = _ScriptedLLM([_end_turn_response("ok")])
+        orch = AgentOrchestrator(
+            llm_client=llm,
+            tools=mock_tool_registry,
+            memory=mock_memory,
+            fact_store=store,
+            memory_inject_facts=2,
+        )
+
+        await orch.run("hi")
+
+        text = llm.received_systems[0][0]["text"]
+        assert "fact 4" in text
+        assert "fact 3" in text
+        assert "fact 0" not in text
+
+    async def test_facts_and_summary_order(self, mock_memory, mock_tool_registry, tmp_path) -> None:
+        mock_memory.set_summary("ROLLED UP")
+        store = FactStore(db_path=tmp_path / "facts.db")
+        store.add("persistent fact")
+        llm = _ScriptedLLM([_end_turn_response("ok")])
+        orch = AgentOrchestrator(
+            llm_client=llm,
+            tools=mock_tool_registry,
+            memory=mock_memory,
+            fact_store=store,
+            memory_inject_facts=5,
+        )
+
+        await orch.run("hi")
+
+        injected = llm.received_systems[0]
+        assert isinstance(injected, list)
+        assert "[Your persistent memory]" in injected[0]["text"]
+        assert "[Summary of earlier conversation]" in injected[1]["text"]
+        assert injected[2]["text"]  # base prompt last
 
 
 class TestUsageAndBudget:

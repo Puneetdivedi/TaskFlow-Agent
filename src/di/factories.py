@@ -15,15 +15,24 @@ from src.agent.claude_client import ClaudeClient
 from src.agent.orchestrator import AgentOrchestrator
 from src.agent.subagent import SubAgentRunner, default_subagents
 from src.di.container import DIContainer
-from src.interfaces import IMemory, ISessionStore, ITaskStore, IToolRegistry, LLMClient
+from src.interfaces import (
+    IFactStore,
+    IMemory,
+    ISessionStore,
+    ITaskStore,
+    IToolRegistry,
+    LLMClient,
+)
 from src.mcp.client import build_mcp_tools, load_mcp_servers
 from src.memory.conversation import ConversationMemory
+from src.memory.fact_store import FactStore
 from src.memory.migration import migrate_legacy_data
 from src.memory.session_store import SessionStore
 from src.memory.sqlite_store import DEFAULT_DB_PATH
 from src.memory.summary import ConversationSummarizer
 from src.memory.task_store import TaskStore
 from src.plugins import discover_tools
+from src.tools.memory_tools import RecallTool, RememberTool
 from src.tools.middleware import (
     AuditMiddleware,
     GuardrailMiddleware,
@@ -41,6 +50,7 @@ class AppComponents:
     orchestrator: AgentOrchestrator
     session_store: ISessionStore
     task_store: ITaskStore
+    fact_store: IFactStore
 
 
 def _build_middleware(settings: Settings) -> ToolPipeline:
@@ -70,7 +80,12 @@ def _build_tool_registry(container: DIContainer, settings: Settings) -> ToolRegi
     runner can dispatch through it, then the ``subagent`` tool (which owns the
     runner) is spliced in as the last registered tool.
     """
-    extra_tools = discover_tools() + build_mcp_tools(load_mcp_servers())
+    fact_store = container.resolve(IFactStore)
+    extra_tools = (
+        discover_tools()
+        + build_mcp_tools(load_mcp_servers())
+        + [RememberTool(fact_store), RecallTool(fact_store)]
+    )
     registry = ToolRegistry(
         work_dir=settings.work_dir,
         safety_level=settings.safety_level,
@@ -105,6 +120,11 @@ def register_defaults(container: DIContainer, settings: Settings) -> None:
             model=settings.anthropic_model,
             prompt_caching=settings.prompt_caching_enabled,
         ),
+    )
+
+    container.register(
+        IFactStore,
+        lambda c: FactStore(db_path=settings.db_path),
     )
 
     container.register(
@@ -144,6 +164,7 @@ def create_production_app(settings: Settings | None = None) -> AppComponents:
     container = DIContainer()
     register_defaults(container, settings)
 
+    fact_store = container.resolve(IFactStore)
     summarizer = ConversationSummarizer(client=container.resolve(LLMClient))
     orchestrator = AgentOrchestrator(
         llm_client=container.resolve(LLMClient),
@@ -154,11 +175,14 @@ def create_production_app(settings: Settings | None = None) -> AppComponents:
         summarizer=summarizer,
         summary_threshold_tokens=settings.summary_threshold_tokens,
         cost_budget_usd=settings.max_cost_usd,
+        fact_store=fact_store,
+        memory_inject_facts=settings.memory_inject_facts,
     )
     return AppComponents(
         orchestrator=orchestrator,
         session_store=container.resolve(ISessionStore),
         task_store=container.resolve(ITaskStore),
+        fact_store=fact_store,
     )
 
 

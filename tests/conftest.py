@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from src.memory.fact_store import FactStore
 from src.memory.task_store import TaskStore
 
 
@@ -180,3 +181,9 @@ def sample_messages() -> list[dict]:
 def task_store(tmp_path: Path) -> TaskStore:
     """A TaskStore backed by a temporary SQLite database."""
     return TaskStore(db_path=tmp_path / "tasks.db")
+
+
+@pytest.fixture
+def fact_store(tmp_path: Path) -> FactStore:
+    """A FactStore backed by a temporary SQLite database."""
+    return FactStore(db_path=tmp_path / "facts.db")
