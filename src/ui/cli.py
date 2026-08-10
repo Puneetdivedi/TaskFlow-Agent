@@ -21,6 +21,7 @@ from src.agent.orchestrator import AgentOrchestrator
 from src.interfaces import IFactStore, IMemory, ISessionStore, ITaskStore, format_facts
 from src.interfaces.task_store import Task
 from src.interfaces.usage import Usage
+from src.ui.approvals import make_approver
 
 console = Console()
 
@@ -511,12 +512,16 @@ async def _run_streamed_turn(
     orchestrator: AgentOrchestrator,
     user_input: str,
     console: Console,
+    *,
+    approvals_enabled: bool = False,
 ) -> tuple[str, str]:
     """Run one turn while streaming the assistant's text live.
 
     Returns ``(final_response_text, streamed_text)``. *streamed_text* is
     what appeared in the live panel; *final_response_text* is whatever
-    ``run`` returned, which may differ (error returns, stop markers).
+    ``run`` returned, which may differ (error returns, stop markers). When
+    *approvals_enabled* is set, risky tool calls pause the panel and ask
+    the user to confirm.
     """
     text_buffer: list[str] = []
     tool_lines: list[str] = []
@@ -536,10 +541,13 @@ async def _run_streamed_turn(
             tool_lines.append(_stream_tool_label(name, args))
             live.update(_stream_renderable("".join(text_buffer), tool_lines))
 
+        approver = make_approver(console, enabled=approvals_enabled, live=live)
+
         response = await orchestrator.run(
             user_input,
             on_text_delta=_on_delta,
             on_tool_call=_on_tool,
+            tool_approver=approver,
         )
 
     return response, "".join(text_buffer)
@@ -551,6 +559,8 @@ async def run_cli(
     session_store: ISessionStore,
     task_store: ITaskStore | None = None,
     fact_store: IFactStore | None = None,
+    *,
+    approvals_enabled: bool = False,
 ) -> None:
     """Main interactive loop."""
     print_banner()
@@ -708,7 +718,12 @@ async def run_cli(
         before = orchestrator.usage
         cost_before = orchestrator.estimated_cost()
         try:
-            response, streamed = await _run_streamed_turn(orchestrator, user_input, console)
+            response, streamed = await _run_streamed_turn(
+                orchestrator,
+                user_input,
+                console,
+                approvals_enabled=approvals_enabled,
+            )
         except KeyboardInterrupt:
             console.print("\n[bold yellow]Turn aborted.[/bold yellow]")
             continue
@@ -749,7 +764,15 @@ def main() -> None:
 
     app = create_production_app(settings=settings)
 
-    asyncio.run(run_cli(app.orchestrator, app.session_store, app.task_store, app.fact_store))
+    asyncio.run(
+        run_cli(
+            app.orchestrator,
+            app.session_store,
+            app.task_store,
+            app.fact_store,
+            approvals_enabled=settings.tool_approvals_enabled,
+        )
+    )
 
 
 if __name__ == "__main__":

@@ -211,6 +211,7 @@ tests/
 - [x] Usage & cost tracking (per-turn and cumulative token/cost display, an optional `MAX_COST_USD` ceiling, and per-session persistence)
 - [x] Parallel tool calls (batched `tool_use` blocks dispatch concurrently up to `MAX_PARALLEL_TOOL_CALLS`)
 - [x] Cross-session memory (durable facts persisted in SQLite, injected as context each turn, with `remember`/`recall` tools and `/remember`/`/recall`/`/forget` commands)
+- [x] Interactive tool approvals (human-in-the-loop `y/n/auto` prompts before destructive tool calls and before overwriting existing files)
 
 ## Sessions
 
@@ -307,6 +308,7 @@ Set these in `.env` (copy from `.env.example`):
 | `TASKFLOW_DB` | `~/.taskflow/taskflow.db` | Shared SQLite database (tasks, sessions, file index, facts) |
 | `MCP_SERVERS` | — | JSON config of external MCP servers to call (see [MCP Client](#mcp-client)) |
 | `MEMORY_INJECT_FACTS` | `5` | Newest durable facts injected as context each turn (`0` disables injection) |
+| `TOOL_APPROVALS_ENABLED` | `1` | Interactive `y/n/auto` prompts before risky tool calls (`0` disables) |
 
 Web tools (`web_search` / `web_fetch`) are always available and use baked-in
 defaults (15s timeout); no configuration required.
@@ -431,6 +433,34 @@ Tune the layer via environment variables:
 | --- | --- | --- |
 | `GUARDRAILS_ENABLED` | `1` | Set to `0` to disable path/command checks and truncation |
 | `MAX_TOOL_RESULT_CHARS` | `20000` | Cap on a single tool result; `0` disables truncation |
+
+## Interactive Tool Approvals
+
+Where guardrails are a hard policy layer, interactive approvals put **you** in
+the loop. With `TOOL_APPROVALS_ENABLED` (default on), the CLI pauses before
+a risky tool call and asks:
+
+```
+[y]es / [n]o / [a]uto for rest of turn:
+```
+
+- **`y`** allows the call to run.
+- **`n`** denies it; the agent sees the denial as a tool result and adapts
+  (e.g. "the user declined — here's the safer alternative").
+- **`a`** auto-approves every remaining tool call for the rest of that turn
+  (resets each turn).
+
+Which calls prompt:
+
+- **Always** — `delete_file`, `move_file`, `run_shell`, and `subagent`
+  (destructive or run external code).
+- **On overwrite** — `write_file` and `yaml_write` only when the target file
+  already exists; writing a new file runs unprompted.
+- Everything else (reads, searches, memory, web tools) runs without prompting.
+
+Denials never leave the turn's single ordered message of tool results, so the
+agent's conversation stays consistent. Set `TOOL_APPROVALS_ENABLED=0` to run
+risky calls without asking (the guardrails layer above still applies).
 
 ## Prompt Caching
 

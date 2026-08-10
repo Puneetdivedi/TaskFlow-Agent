@@ -472,6 +472,141 @@ class TestParallelToolCalls:
         assert tool_msgs[0]["content"][0]["tool_use_id"] == "toolu_1"
 
 
+class TestToolApprover:
+    async def test_approved_call_runs(self, mock_memory, mock_tool_registry) -> None:
+        llm = _ScriptedLLM(
+            [
+                _multi_tool_use_response([("toolu_a", "read_file", {"path": "a.txt"})]),
+                _end_turn_response("done"),
+            ]
+        )
+        orch = _make_orchestrator(llm, mock_memory, mock_tool_registry)
+        seen: list[str] = []
+
+        async def approver(name: str, args: dict) -> str | None:
+            seen.append(name)
+            return None
+
+        result = await orch.run("read", tool_approver=approver)
+
+        assert result == "done"
+        assert seen == ["read_file"]
+        assert mock_tool_registry._call_count == 1
+        tool_msgs = [
+            m
+            for m in mock_memory.messages
+            if isinstance(m.get("content"), list) and m["content"][0].get("type") == "tool_result"
+        ]
+        assert tool_msgs[0]["content"][0]["content"] == "mock result"
+
+    async def test_denied_call_does_not_run(self, mock_memory, mock_tool_registry) -> None:
+        llm = _ScriptedLLM(
+            [
+                _multi_tool_use_response([("toolu_a", "delete_file", {"path": "a.txt"})]),
+                _end_turn_response("ok, skipping"),
+            ]
+        )
+        orch = _make_orchestrator(llm, mock_memory, mock_tool_registry)
+
+        async def approver(name: str, args: dict) -> str | None:
+            return "you said no"
+
+        result = await orch.run("delete", tool_approver=approver)
+
+        assert result == "ok, skipping"
+        assert mock_tool_registry._call_count == 0
+        tool_msgs = [
+            m
+            for m in mock_memory.messages
+            if isinstance(m.get("content"), list) and m["content"][0].get("type") == "tool_result"
+        ]
+        blocks = tool_msgs[0]["content"]
+        assert blocks[0]["tool_use_id"] == "toolu_a"
+        assert "User denied the delete_file tool call: you said no" in blocks[0]["content"]
+
+    async def test_mixed_chunk_preserves_block_order(self, mock_memory, mock_tool_registry) -> None:
+        llm = _ScriptedLLM(
+            [
+                _multi_tool_use_response(
+                    [
+                        ("toolu_a", "read_file", {"path": "a.txt"}),
+                        ("toolu_b", "delete_file", {"path": "b.txt"}),
+                        ("toolu_c", "read_file", {"path": "c.txt"}),
+                    ]
+                ),
+                _end_turn_response("done"),
+            ]
+        )
+        orch = _make_orchestrator(llm, mock_memory, mock_tool_registry)
+
+        async def approver(name: str, args: dict) -> str | None:
+            return "blocked" if name == "delete_file" else None
+
+        result = await orch.run("mixed", tool_approver=approver)
+
+        assert result == "done"
+        assert mock_tool_registry._call_count == 2
+        tool_msgs = [
+            m
+            for m in mock_memory.messages
+            if isinstance(m.get("content"), list) and m["content"][0].get("type") == "tool_result"
+        ]
+        assert len(tool_msgs) == 1
+        blocks = tool_msgs[0]["content"]
+        assert [b["tool_use_id"] for b in blocks] == ["toolu_a", "toolu_b", "toolu_c"]
+        assert blocks[0]["content"] == "mock result"
+        assert "User denied the delete_file tool call: blocked" in blocks[1]["content"]
+        assert blocks[2]["content"] == "mock result"
+
+    async def test_all_denied_turn_still_ends(self, mock_memory, mock_tool_registry) -> None:
+        llm = _ScriptedLLM(
+            [
+                _multi_tool_use_response(
+                    [
+                        ("toolu_a", "delete_file", {"path": "a.txt"}),
+                        ("toolu_b", "run_shell", {"cmd": "ls"}),
+                    ]
+                ),
+                _end_turn_response("nothing to do"),
+            ]
+        )
+        orch = _make_orchestrator(llm, mock_memory, mock_tool_registry)
+
+        async def approver(name: str, args: dict) -> str | None:
+            return "not now"
+
+        result = await orch.run("delete", tool_approver=approver)
+
+        assert result == "nothing to do"
+        assert mock_tool_registry._call_count == 0
+
+    async def test_on_tool_call_fires_for_denied_blocks(
+        self, mock_memory, mock_tool_registry
+    ) -> None:
+        llm = _ScriptedLLM(
+            [
+                _multi_tool_use_response(
+                    [
+                        ("toolu_a", "read_file", {"path": "a.txt"}),
+                        ("toolu_b", "delete_file", {"path": "b.txt"}),
+                    ]
+                ),
+                _end_turn_response("done"),
+            ]
+        )
+        orch = _make_orchestrator(llm, mock_memory, mock_tool_registry)
+        calls: list[str] = []
+
+        async def approver(name: str, args: dict) -> str | None:
+            return None if name == "read_file" else "no"
+
+        async def sink(name: str, args: dict) -> None:
+            calls.append(name)
+
+        await orch.run("mixed", tool_approver=approver, on_tool_call=sink)
+        assert calls == ["read_file", "delete_file"]
+
+
 class TestRunStreaming:
     async def test_streams_deltas_forwarded_to_sink(self, mock_memory, mock_tool_registry) -> None:
         llm = _StreamingLLM([_end_turn_response("Hello there")])

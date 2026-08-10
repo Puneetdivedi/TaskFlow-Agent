@@ -7,6 +7,7 @@ LLM providers, custom memory backends) without modifying consumers.
 
 from __future__ import annotations
 
+from src.interfaces.approval import ToolApprover
 from src.interfaces.fact_store import Fact, IFactStore, format_facts
 from src.interfaces.file_index import IFileIndex
 from src.interfaces.llm_client import LLMClient, TextDeltaSink, ToolCallSink
@@ -28,6 +29,7 @@ __all__ = [
     "SessionInfo",
     "Task",
     "TextDeltaSink",
+    "ToolApprover",
     "ToolCallSink",
     "Usage",
     "format_facts",

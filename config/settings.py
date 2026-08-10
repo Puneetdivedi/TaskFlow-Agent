@@ -57,6 +57,12 @@ class Settings:
         default_factory=lambda: int(os.getenv("MAX_TOOL_RESULT_CHARS", "20000"))
     )
 
+    # --- Interactive tool approvals (human-in-the-loop gating) ---
+    tool_approvals_enabled: bool = field(
+        default_factory=lambda: os.getenv("TOOL_APPROVALS_ENABLED", "1").lower()
+        in ("1", "true", "yes")
+    )
+
     # --- Paths ---
     work_dir: Path = field(default_factory=lambda: Path(os.getenv("AGENT_WORK_DIR", ".")).resolve())
     memory_dir: Path = field(default_factory=lambda: Path.home() / ".taskflow" / "memory")
