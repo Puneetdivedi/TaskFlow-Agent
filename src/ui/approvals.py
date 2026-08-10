@@ -22,7 +22,7 @@ from src.interfaces.approval import ToolApprover
 ALWAYS_APPROVE: frozenset[str] = frozenset({"delete_file", "move_file", "run_shell", "subagent"})
 
 # File-writing tools approved only when they would overwrite an existing file.
-OVERWRITE_CHECK: frozenset[str] = frozenset({"write_file", "yaml_write"})
+OVERWRITE_CHECK: frozenset[str] = frozenset({"write_file", "yaml_write", "json_write"})
 
 _PROMPT_TEXT = "[y]es / [n]o / [a]uto for rest of turn"
 

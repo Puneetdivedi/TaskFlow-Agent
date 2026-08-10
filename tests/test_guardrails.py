@@ -83,6 +83,26 @@ class TestPathConfinement:
         result = await mw.before("run_shell", {"command": "ls", "work_dir": str(tmp_path)})
         assert result == {"command": "ls", "work_dir": str(tmp_path)}
 
+    @pytest.mark.parametrize("tool_name", ["json_read", "json_write", "csv_read", "csv_aggregate"])
+    async def test_day_to_day_path_tools_inside_passes(
+        self, tmp_path: Path, tool_name: str
+    ) -> None:
+        mw = GuardrailMiddleware(work_dir=tmp_path)
+        args = {"path": str(tmp_path / "f.json")}
+
+        result = await mw.before(tool_name, args)
+
+        assert result == args
+
+    @pytest.mark.parametrize("tool_name", ["json_read", "json_write", "csv_read", "csv_aggregate"])
+    async def test_day_to_day_path_tools_escape_blocked(
+        self, tmp_path: Path, tool_name: str
+    ) -> None:
+        mw = GuardrailMiddleware(work_dir=tmp_path)
+
+        with pytest.raises(ToolError, match="Path traversal"):
+            await mw.before(tool_name, {"path": "/etc/passwd"})
+
 
 # --- shell deny-prefixes ----------------------------------------------------
 class TestShellDenyPrefixes:

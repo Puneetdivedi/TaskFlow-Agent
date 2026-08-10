@@ -54,6 +54,14 @@ class TestApprovalReason:
         target.write_text("a: 1")
         assert approval_reason("yaml_write", {"path": str(target)}) is not None
 
+    def test_json_write_to_existing_path_flagged(self, tmp_path) -> None:
+        target = tmp_path / "existing.json"
+        target.write_text("{}")
+        assert approval_reason("json_write", {"path": str(target)}) is not None
+
+    def test_json_write_to_new_path_allowed(self, tmp_path) -> None:
+        assert approval_reason("json_write", {"path": str(tmp_path / "new.json")}) is None
+
     def test_overwrite_check_ignores_non_string_path(self) -> None:
         assert approval_reason("write_file", {"path": 123, "content": "x"}) is None
 

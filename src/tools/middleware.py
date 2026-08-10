@@ -39,6 +39,10 @@ PATH_ARG_NAMES: dict[str, tuple[str, ...]] = {
     "search_files": ("path",),
     "yaml_read": ("path",),
     "yaml_write": ("path",),
+    "json_read": ("path",),
+    "json_write": ("path",),
+    "csv_read": ("path",),
+    "csv_aggregate": ("path",),
     "file_index": ("path",),
     "run_shell": ("work_dir",),
 }
