@@ -31,7 +31,9 @@ CREATE TABLE IF NOT EXISTS tasks (
     created_at TEXT NOT NULL DEFAULT '',
     updated_at TEXT NOT NULL DEFAULT '',
     due_at TEXT NOT NULL DEFAULT '',
-    every_days INTEGER NOT NULL DEFAULT 0
+    every_days INTEGER NOT NULL DEFAULT 0,
+    plan TEXT NOT NULL DEFAULT '',
+    auto_run INTEGER NOT NULL DEFAULT 0
 );
 """
 

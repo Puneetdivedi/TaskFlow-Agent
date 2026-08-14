@@ -327,6 +327,124 @@ class DeleteFileTool(Tool):
         return f"Deleted {p}"
 
 
+class CopyFileTool(Tool):
+    """Copy a file or directory to a new path."""
+
+    @property
+    def name(self) -> str:
+        return "copy_file"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Copy a file or directory to a new path. Creates the destination's "
+            "parent directories; overwrites an existing destination."
+        )
+
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "source": {"type": "string", "description": "Path to copy from"},
+                "dest": {"type": "string", "description": "Destination path"},
+            },
+            "required": ["source", "dest"],
+        }
+
+    async def run(self, source: str, dest: str, **kwargs: Any) -> str:  # type: ignore[override]
+        src = Path(source).expanduser().resolve()
+        dst = Path(dest).expanduser().resolve()
+        if not src.exists():
+            raise ToolError(f"Source not found: {src}")
+        logger.debug("Copying: %s → %s", src, dst)
+        await asyncio.to_thread(dst.parent.mkdir, parents=True, exist_ok=True)
+        try:
+            if src.is_dir():
+                await asyncio.to_thread(shutil.copytree, src, dst, dirs_exist_ok=True)
+            else:
+                await asyncio.to_thread(shutil.copy2, src, dst)
+        except OSError as exc:
+            raise ToolError(f"Failed to copy {src} → {dst}: {exc}") from exc
+        return f"Copied {src} → {dst}"
+
+
+class FileInfoTool(Tool):
+    """Return metadata about a file or directory."""
+
+    @property
+    def name(self) -> str:
+        return "file_info"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Return metadata about a file or directory: type, size, last-modified "
+            "time, and permissions."
+        )
+
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Path to inspect"},
+            },
+            "required": ["path"],
+        }
+
+    async def run(self, path: str, **kwargs: Any) -> str:  # type: ignore[override]
+        p = Path(path).expanduser().resolve()
+        if not p.exists():
+            raise ToolError(f"Not found: {p}")
+        st = p.stat()
+        kind = "symlink" if p.is_symlink() else ("directory" if p.is_dir() else "file")
+        mtime = datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+        perms = oct(st.st_mode & 0o777)
+        return "\n".join(
+            [
+                f"Path: {p}",
+                f"Type: {kind}",
+                f"Size: {st.st_size} bytes",
+                f"Modified: {mtime}",
+                f"Permissions: {perms}",
+            ]
+        )
+
+
+class MkdirTool(Tool):
+    """Create a directory, including any missing parent directories."""
+
+    @property
+    def name(self) -> str:
+        return "mkdir"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Create a directory, including any missing parent directories. "
+            "Safe to call when it already exists."
+        )
+
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Directory path to create"},
+            },
+            "required": ["path"],
+        }
+
+    async def run(self, path: str, **kwargs: Any) -> str:  # type: ignore[override]
+        p = Path(path).expanduser().resolve()
+        try:
+            await asyncio.to_thread(p.mkdir, parents=True, exist_ok=True)
+        except OSError as exc:
+            raise ToolError(f"Failed to create directory {p}: {exc}") from exc
+        return f"Created directory {p}"
+
+
 class FileIndexTool(Tool):
     """Index the filesystem so the agent can quickly answer structure questions."""
 

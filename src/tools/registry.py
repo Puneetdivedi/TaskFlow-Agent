@@ -16,9 +16,12 @@ from src.tools.data_tools import (
 )
 from src.tools.datetime_tools import CurrentDateTool, DateAddTool, DaysBetweenTool
 from src.tools.file_tools import (
+    CopyFileTool,
     DeleteFileTool,
+    FileInfoTool,
     FileIndexTool,
     ListFilesTool,
+    MkdirTool,
     MoveFileTool,
     ReadFileTool,
     SearchFilesTool,
@@ -74,6 +77,9 @@ class ToolRegistry:
         self.add_tool(WriteFileTool())
         self.add_tool(ListFilesTool())
         self.add_tool(SearchFilesTool())
+        self.add_tool(CopyFileTool())
+        self.add_tool(FileInfoTool())
+        self.add_tool(MkdirTool())
         self.add_tool(MoveFileTool())
         self.add_tool(DeleteFileTool())
         self.add_tool(FileIndexTool(db_path=file_index_db))

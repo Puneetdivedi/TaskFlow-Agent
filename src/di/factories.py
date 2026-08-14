@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from config.settings import Settings
+from src.agent.automation import AutomationRunner
 from src.agent.claude_client import ClaudeClient
 from src.agent.orchestrator import AgentOrchestrator
 from src.agent.subagent import SubAgentRunner, default_subagents
@@ -25,6 +26,7 @@ from src.interfaces import (
 )
 from src.mcp.client import build_mcp_tools, load_mcp_servers
 from src.memory.conversation import ConversationMemory
+from src.notify import Notifier
 from src.memory.fact_store import FactStore
 from src.memory.migration import migrate_legacy_data
 from src.memory.session_store import SessionStore
@@ -39,18 +41,20 @@ from src.tools.middleware import (
     LoggingMiddleware,
     ToolPipeline,
 )
+from src.tools.automation_tool import AutomationRunTool
 from src.tools.registry import ToolRegistry
 from src.tools.subagent_tool import SubAgentTool
 
 
 @dataclass(frozen=True)
 class AppComponents:
-    """The fully wired application: orchestrator plus its stores."""
+    """The fully wired application: orchestrator plus its stores and services."""
 
     orchestrator: AgentOrchestrator
     session_store: ISessionStore
     task_store: ITaskStore
     fact_store: IFactStore
+    automation: AutomationRunner
 
 
 def _build_middleware(settings: Settings) -> ToolPipeline:
@@ -101,6 +105,15 @@ def _build_tool_registry(container: DIContainer, settings: Settings) -> ToolRegi
         subagents=default_subagents(),
     )
     registry.add_tool(SubAgentTool(runner))
+
+    automation = AutomationRunner(
+        llm_client=container.resolve(LLMClient),
+        registry=registry,
+        fact_store=fact_store,
+        allow_destructive=(settings.autonomous_approval == "full"),
+    )
+    container.register(AutomationRunner, lambda c: automation)
+    registry.add_tool(AutomationRunTool(automation, container.resolve(ITaskStore)))
     return registry
 
 
@@ -183,6 +196,7 @@ def create_production_app(settings: Settings | None = None) -> AppComponents:
         session_store=container.resolve(ISessionStore),
         task_store=container.resolve(ITaskStore),
         fact_store=fact_store,
+        automation=container.resolve(AutomationRunner),
     )
 
 

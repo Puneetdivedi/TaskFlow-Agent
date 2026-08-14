@@ -52,6 +52,18 @@ class _OrchStub:
         return self._usage.estimate_cost(None)
 
 
+class _FakeAutomation:
+    """Records run_plan calls and returns a canned report."""
+
+    def __init__(self, report: str = "report text") -> None:
+        self.report = report
+        self.calls: list[tuple[str, str]] = []
+
+    async def run_plan(self, plan: str, title: str = "") -> str:
+        self.calls.append((plan, title))
+        return self.report
+
+
 def _script_prompt(monkeypatch, answers: list[str]) -> None:
     it = iter(answers)
     monkeypatch.setattr(cli_module.Prompt, "ask", lambda *a, **k: next(it))
@@ -465,6 +477,109 @@ class TestRunCLI:
         await cli_module.run_cli(_OrchStub(mock_memory), store)
 
         # No exception: the guard must short-circuit before the agent path.
+
+    async def test_task_run_dispatches_through_loop(
+        self, store: SessionStore, mock_memory, task_store: TaskStore, monkeypatch
+    ) -> None:
+        task_store.create("Foo", plan="write a file")
+        automation = _FakeAutomation()
+        _script_prompt(monkeypatch, ["/task run t1", "/exit"])
+
+        await cli_module.run_cli(
+            _OrchStub(mock_memory), store, task_store, automation=automation
+        )
+
+        assert automation.calls == [("write a file", "Foo")]
+        assert task_store.get("t1").status == "done"  # one-shot advanced
+
+    async def test_task_run_without_automation_is_graceful(
+        self, store: SessionStore, mock_memory, task_store: TaskStore, monkeypatch
+    ) -> None:
+        task_store.create("Foo", plan="write a file")
+        _script_prompt(monkeypatch, ["/task run t1", "/exit"])
+
+        await cli_module.run_cli(_OrchStub(mock_memory), store, task_store)
+
+        # No exception and no run: the guard short-circuits.
+        assert task_store.get("t1").status == "todo"
+
+    async def test_task_run_without_plan_is_graceful(
+        self, store: SessionStore, mock_memory, task_store: TaskStore, monkeypatch
+    ) -> None:
+        task_store.create("Foo")
+        automation = _FakeAutomation()
+        _script_prompt(monkeypatch, ["/task run t1", "/exit"])
+
+        await cli_module.run_cli(
+            _OrchStub(mock_memory), store, task_store, automation=automation
+        )
+
+        assert automation.calls == []  # no plan, never invoked
+        assert task_store.get("t1").status == "todo"
+
+    async def test_autonomous_scheduler_tick_runs_recurring(
+        self, store: SessionStore, mock_memory, task_store: TaskStore, monkeypatch
+    ) -> None:
+        automation = _FakeAutomation()
+        # The task is created + configured through commands AFTER startup, so it
+        # is not seeded into `reported` — the next tick auto-runs it.
+        _script_prompt(
+            monkeypatch,
+            [
+                "/task create Foo",
+                "/task update t1 due_at=2026-08-01 every_days=7 plan=write a file auto_run=true",
+                "/exit",
+            ],
+        )
+
+        await cli_module.run_cli(
+            _OrchStub(mock_memory), store, task_store, automation=automation
+        )
+
+        assert automation.calls == [("write a file", "Foo")]
+        task = task_store.get("t1")
+        assert task.status == "todo"  # recurring cycle continues
+        assert task.due_at == "2026-08-08"  # rolled forward by every_days
+
+    async def test_autonomous_scheduler_tick_skips_non_auto(
+        self, store: SessionStore, mock_memory, task_store: TaskStore, monkeypatch
+    ) -> None:
+        automation = _FakeAutomation()
+        due_date = (datetime.now() - timedelta(days=1)).date().isoformat()
+        _script_prompt(
+            monkeypatch,
+            [
+                "/task create Foo",
+                f"/task update t1 due_at={due_date}",
+                "/exit",
+            ],
+        )
+
+        await cli_module.run_cli(
+            _OrchStub(mock_memory), store, task_store, automation=automation
+        )
+
+        assert automation.calls == []  # reminders never invoke the runner
+        assert task_store.get("t1").status == "todo"
+
+    async def test_autonomous_scheduler_tick_without_automation(
+        self, store: SessionStore, mock_memory, task_store: TaskStore, monkeypatch
+    ) -> None:
+        # A due auto-run task in a build without automation degrades to a
+        # plain reminder instead of crashing.
+        due_date = (datetime.now() - timedelta(days=1)).date().isoformat()
+        _script_prompt(
+            monkeypatch,
+            [
+                "/task create Foo",
+                f"/task update t1 due_at={due_date} plan=steps auto_run=true",
+                "/exit",
+            ],
+        )
+
+        await cli_module.run_cli(_OrchStub(mock_memory), store, task_store)
+
+        assert task_store.get("t1").status == "todo"
 
 
 class TestMemoryCommandHandler:

@@ -24,6 +24,8 @@ class Task:
     updated_at: str = ""
     due_at: str = ""  # ISO-8601 due date/time; "" = no due date
     every_days: int = 0  # recurrence interval in days; 0 = not recurring
+    plan: str = ""  # multi-step instructions for autonomous execution; "" = none
+    auto_run: bool = False  # run ``plan`` autonomously when the task comes due
 
 
 class ITaskStore(Protocol):
@@ -36,6 +38,8 @@ class ITaskStore(Protocol):
         priority: str = "medium",
         due_at: str = "",
         every_days: int = 0,
+        plan: str = "",
+        auto_run: bool = False,
     ) -> Task:
         """Create a task and persist it. Returns the new task."""
         ...
@@ -66,6 +70,8 @@ class ITaskStore(Protocol):
         priority: str | None = None,
         due_at: str | None = None,
         every_days: int | None = None,
+        plan: str | None = None,
+        auto_run: bool | None = None,
     ) -> Task:
         """Update the given fields of *task_id* and persist the change.
 
@@ -78,6 +84,15 @@ class ITaskStore(Protocol):
         """Mark a task done; recurring tasks (``every_days > 0`` with a
         ``due_at``) roll their due date forward by ``every_days`` and stay
         ``todo`` instead of being completed."""
+        ...
+
+    def advance(self, task_id: str) -> Task:
+        """Roll a recurring task's ``due_at`` forward by ``every_days``
+        without changing its status, so it can fire again next cycle.
+
+        One-shot tasks (``every_days == 0``) are marked ``done``. Raises
+        ``KeyError`` if no such task exists.
+        """
         ...
 
     def delete(self, task_id: str) -> None:

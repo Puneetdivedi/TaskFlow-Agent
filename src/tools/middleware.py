@@ -33,7 +33,10 @@ DEFAULT_MAX_RESULT_CHARS = 20_000
 PATH_ARG_NAMES: dict[str, tuple[str, ...]] = {
     "read_file": ("path",),
     "write_file": ("path",),
+    "copy_file": ("source", "dest"),
     "delete_file": ("path",),
+    "file_info": ("path",),
+    "mkdir": ("path",),
     "move_file": ("source", "dest"),
     "list_files": ("path",),
     "search_files": ("path",),
@@ -162,7 +165,7 @@ class LoggingMiddleware(ToolMiddleware):
 class AuditMiddleware(ToolMiddleware):
     """Record high-severity operations (delete, move, shell) at WARNING level."""
 
-    AUDIT_TOOLS = {"delete_file", "move_file", "run_shell"}
+    AUDIT_TOOLS = {"delete_file", "move_file", "run_shell", "send_email"}
 
     async def before(
         self,

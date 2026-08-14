@@ -12,13 +12,16 @@ from src.ui import approvals as approvals_module
 from src.ui.approvals import (
     ALWAYS_APPROVE,
     approval_reason,
+    autonomous_approver,
     make_approver,
 )
 
 
 class TestApprovalReason:
     def test_always_approve_tools_flagged(self) -> None:
-        assert ALWAYS_APPROVE == frozenset({"delete_file", "move_file", "run_shell", "subagent"})
+        assert ALWAYS_APPROVE == frozenset(
+            {"delete_file", "move_file", "run_shell", "send_email", "subagent"}
+        )
         for name in ALWAYS_APPROVE:
             assert approval_reason(name, {}) is not None
 
@@ -61,6 +64,23 @@ class TestApprovalReason:
 
     def test_json_write_to_new_path_allowed(self, tmp_path) -> None:
         assert approval_reason("json_write", {"path": str(tmp_path / "new.json")}) is None
+
+    def test_copy_file_to_existing_dest_flagged(self, tmp_path) -> None:
+        dest = tmp_path / "existing.txt"
+        dest.write_text("data")
+        reason = approval_reason(
+            "copy_file", {"source": str(tmp_path / "a.txt"), "dest": str(dest)}
+        )
+        assert reason is not None
+        assert "overwrite" in reason
+
+    def test_copy_file_to_new_dest_allowed(self, tmp_path) -> None:
+        assert (
+            approval_reason(
+                "copy_file", {"source": str(tmp_path / "a.txt"), "dest": str(tmp_path / "new.txt")}
+            )
+            is None
+        )
 
     def test_overwrite_check_ignores_non_string_path(self) -> None:
         assert approval_reason("write_file", {"path": 123, "content": "x"}) is None
@@ -135,3 +155,39 @@ class TestMakeApprover:
         rendered = buffer.getvalue()
         assert "delete_file" in rendered
         assert 'args: {"path": "x"}' in rendered
+
+
+class TestAutonomousApprover:
+    async def test_safe_default_denies_destructive(self, tmp_path) -> None:
+        approver = autonomous_approver()
+        for name in ("delete_file", "run_shell", "move_file", "send_email", "subagent"):
+            reason = await approver(name, {"path": "x"})
+            assert reason is not None
+            assert "Autonomous policy" in reason
+            assert name in reason
+
+    async def test_safe_default_denies_overwrite_of_existing(self, tmp_path) -> None:
+        target = tmp_path / "existing.txt"
+        target.write_text("data")
+        approver = autonomous_approver()
+        reason = await approver("write_file", {"path": str(target), "content": "x"})
+        assert reason is not None
+        assert "overwrite" in reason
+
+    async def test_safe_default_allows_safe_calls(self, tmp_path) -> None:
+        approver = autonomous_approver()
+        assert await approver("read_file", {"path": str(tmp_path / "f.txt")}) is None
+        assert (
+            await approver("write_file", {"path": str(tmp_path / "new.txt"), "content": "x"})
+            is None
+        )
+        assert await approver("web_search", {"query": "x"}) is None
+
+    async def test_full_autonomy_allows_everything(self, tmp_path) -> None:
+        approver = autonomous_approver(allow_destructive=True)
+        assert await approver("delete_file", {"path": "x"}) is None
+        assert await approver("run_shell", {"command": "rm -rf /"}) is None
+        assert (
+            await approver("write_file", {"path": str(tmp_path / "existing.txt"), "content": "x"})
+            is None
+        )

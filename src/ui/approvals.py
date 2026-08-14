@@ -19,10 +19,18 @@ from rich.prompt import Prompt
 from src.interfaces.approval import ToolApprover
 
 # Tools that always require explicit approval, whatever the arguments.
-ALWAYS_APPROVE: frozenset[str] = frozenset({"delete_file", "move_file", "run_shell", "subagent"})
+ALWAYS_APPROVE: frozenset[str] = frozenset(
+    {"delete_file", "move_file", "run_shell", "send_email", "subagent"}
+)
 
-# File-writing tools approved only when they would overwrite an existing file.
-OVERWRITE_CHECK: frozenset[str] = frozenset({"write_file", "yaml_write", "json_write"})
+# File-writing tools approved only when they would overwrite an existing file,
+# mapped to the argument name that carries the target path.
+OVERWRITE_PATH_ARGS: dict[str, str] = {
+    "write_file": "path",
+    "yaml_write": "path",
+    "json_write": "path",
+    "copy_file": "dest",
+}
 
 _PROMPT_TEXT = "[y]es / [n]o / [a]uto for rest of turn"
 
@@ -31,11 +39,34 @@ def approval_reason(name: str, args: dict[str, Any]) -> str | None:
     """Return a reason the call needs approval, or ``None`` to allow it."""
     if name in ALWAYS_APPROVE:
         return f"{name} can modify or execute outside the agent"
-    if name in OVERWRITE_CHECK:
-        path = args.get("path")
+    arg_name = OVERWRITE_PATH_ARGS.get(name)
+    if arg_name is not None:
+        path = args.get(arg_name)
         if isinstance(path, str) and Path(path).expanduser().resolve().exists():
             return f"{name} would overwrite an existing file"
     return None
+
+
+def autonomous_approver(*, allow_destructive: bool = False) -> ToolApprover:
+    """Build a ``ToolApprover`` for unattended (autonomous) task runs.
+
+    With the safe default (``allow_destructive=False``), tools in
+    :data:`ALWAYS_APPROVE` and overwrites of existing files are denied with a
+    plain reason string the model can see and adapt to; everything else runs.
+    With ``allow_destructive=True`` every call is allowed — the guardrail
+    middleware (path confinement, forbidden shell prefixes, result cap) remains
+    the safety boundary.
+    """
+
+    async def approver(name: str, args: dict[str, Any]) -> str | None:
+        if allow_destructive:
+            return None
+        reason = approval_reason(name, args)
+        if reason is None:
+            return None
+        return f"Autonomous policy: {reason}"
+
+    return approver
 
 
 def make_approver(

@@ -63,6 +63,27 @@ class Settings:
         in ("1", "true", "yes")
     )
 
+    # --- Autonomous task runs ---
+    autonomous_approval: str = field(
+        default_factory=lambda: os.getenv("TASKFLOW_AUTONOMOUS_APPROVAL", "safe").lower()
+    )
+
+    # --- Notifications (desktop toast + SMTP email) ---
+    notify_desktop: bool = field(
+        default_factory=lambda: os.getenv("NOTIFY_DESKTOP", "1").lower()
+        in ("1", "true", "yes")
+    )
+    notify_email_to: str = field(default_factory=lambda: os.getenv("NOTIFY_EMAIL_TO", ""))
+    smtp_host: str = field(default_factory=lambda: os.getenv("SMTP_HOST", ""))
+    smtp_port: int = field(default_factory=lambda: int(os.getenv("SMTP_PORT", "587")))
+    smtp_user: str = field(default_factory=lambda: os.getenv("SMTP_USER", ""))
+    smtp_password: str = field(default_factory=lambda: os.getenv("SMTP_PASSWORD", ""))
+    smtp_from: str = field(default_factory=lambda: os.getenv("SMTP_FROM", ""))
+    smtp_starttls: bool = field(
+        default_factory=lambda: os.getenv("SMTP_STARTTLS", "1").lower()
+        in ("1", "true", "yes")
+    )
+
     # --- Paths ---
     work_dir: Path = field(default_factory=lambda: Path(os.getenv("AGENT_WORK_DIR", ".")).resolve())
     memory_dir: Path = field(default_factory=lambda: Path.home() / ".taskflow" / "memory")
@@ -142,6 +163,11 @@ def _validate_settings(s: Settings) -> None:
     if s.max_cost_usd < 0:
         raise ValueError(
             f"MAX_COST_USD must be >= 0 (0 disables the cap), got {s.max_cost_usd}"
+        )
+
+    if s.autonomous_approval not in ("safe", "full"):
+        raise ValueError(
+            f"TASKFLOW_AUTONOMOUS_APPROVAL must be 'safe' or 'full', got {s.autonomous_approval!r}"
         )
 
     valid_levels = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}

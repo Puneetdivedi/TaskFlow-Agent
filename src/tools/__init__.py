@@ -11,14 +11,18 @@ from src.tools.data_tools import (
 )
 from src.tools.datetime_tools import CurrentDateTool, DateAddTool, DaysBetweenTool
 from src.tools.file_tools import (
+    CopyFileTool,
     DeleteFileTool,
+    FileInfoTool,
     FileIndexTool,
     ListFilesTool,
+    MkdirTool,
     MoveFileTool,
     ReadFileTool,
     SearchFilesTool,
     WriteFileTool,
 )
+from src.tools.notify_tools import NotifyTool, SendEmailTool
 from src.tools.registry import ToolRegistry
 from src.tools.shell_tools import RunShellTool
 from src.tools.subagent_tool import SubAgentTool
@@ -47,20 +51,25 @@ __all__ = [
     "CalculatorTool",
     "ClipboardReadTool",
     "ClipboardWriteTool",
+    "CopyFileTool",
     "CsvAggregateTool",
     "CsvReadTool",
     "CurrentDateTool",
     "DateAddTool",
     "DaysBetweenTool",
     "DeleteFileTool",
+    "FileInfoTool",
     "FileIndexTool",
     "HashTool",
     "JsonReadTool",
     "JsonWriteTool",
     "ListFilesTool",
+    "MkdirTool",
     "MoveFileTool",
+    "NotifyTool",
     "ReadFileTool",
     "RunShellTool",
+    "SendEmailTool",
     "SearchFilesTool",
     "SubAgentTool",
     "SystemInfoTool",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -228,6 +229,103 @@ class TestTaskComplete:
     def test_complete_missing_raises_key_error(self, task_store: TaskStore) -> None:
         with pytest.raises(KeyError, match="not found"):
             task_store.complete("t99")
+
+
+class TestTaskPlanAutoRun:
+    def test_create_defaults_plan_and_auto_run(self, task_store: TaskStore) -> None:
+        task = task_store.create("Buy milk")
+        assert task.plan == ""
+        assert task.auto_run is False
+
+    def test_create_accepts_plan_and_auto_run(self, task_store: TaskStore) -> None:
+        task = task_store.create(
+            "Daily report",
+            plan="Write README.md then list the directory.",
+            auto_run=True,
+        )
+        assert task.plan == "Write README.md then list the directory."
+        assert task.auto_run is True
+
+    def test_update_plan_and_auto_run(self, task_store: TaskStore) -> None:
+        task_store.create("Task")
+        updated = task_store.update("t1", plan="step one\nstep two", auto_run=True)
+        assert updated.plan == "step one\nstep two"
+        assert updated.auto_run is True
+
+    def test_update_clears_plan_with_empty_string(self, task_store: TaskStore) -> None:
+        task_store.create("Task", plan="old plan")
+        updated = task_store.update("t1", plan="")
+        assert updated.plan == ""
+
+    def test_update_auto_run_back_to_false(self, task_store: TaskStore) -> None:
+        task_store.create("Task", auto_run=True)
+        updated = task_store.update("t1", auto_run=False)
+        assert updated.auto_run is False
+
+    def test_plan_roundtrips_through_reload(self, task_store: TaskStore, tmp_path: Path) -> None:
+        task_store.create("Task", plan="do things", auto_run=True)
+        reloaded = TaskStore(db_path=tmp_path / "tasks.db")
+        task = reloaded.get("t1")
+        assert task.plan == "do things"
+        assert task.auto_run is True
+
+
+class TestTaskAdvance:
+    def test_advance_recurring_rolls_due_and_keeps_status(self, task_store: TaskStore) -> None:
+        task_store.create("Water plants", due_at="2026-08-10", every_days=7)
+        task_store.update("t1", status="in_progress")
+        advanced = task_store.advance("t1")
+        assert advanced.status == "in_progress"  # status preserved
+        assert advanced.due_at == "2026-08-17"
+
+    def test_advance_one_shot_marks_done(self, task_store: TaskStore) -> None:
+        task_store.create("Buy milk", due_at="2026-08-10")
+        advanced = task_store.advance("t1")
+        assert advanced.status == "done"
+        assert advanced.due_at == "2026-08-10"  # untouched
+
+    def test_advance_recurring_preserves_time_of_day(self, task_store: TaskStore) -> None:
+        task_store.create("Standup", due_at="2026-08-10T09:30:00", every_days=1)
+        advanced = task_store.advance("t1")
+        assert advanced.due_at == "2026-08-11T09:30:00"
+
+    def test_advance_recurring_persists(self, task_store: TaskStore, tmp_path: Path) -> None:
+        task_store.create("Water plants", due_at="2026-08-10", every_days=7)
+        task_store.advance("t1")
+        reloaded = TaskStore(db_path=tmp_path / "tasks.db")
+        assert reloaded.get("t1").due_at == "2026-08-17"
+        assert reloaded.get("t1").status == "todo"
+
+    def test_advance_missing_raises_key_error(self, task_store: TaskStore) -> None:
+        with pytest.raises(KeyError, match="not found"):
+            task_store.advance("t99")
+
+
+class TestTaskMigration:
+    def test_migrates_old_schema_columns(self, tmp_path: Path) -> None:
+        """A database created before plan/auto_run gains the columns."""
+        db = tmp_path / "legacy.db"
+        conn = sqlite3.connect(db)
+        conn.execute(
+            "CREATE TABLE tasks ("
+            "id TEXT PRIMARY KEY, title TEXT NOT NULL, "
+            "description TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'todo', "
+            "priority TEXT NOT NULL DEFAULT 'medium', created_at TEXT NOT NULL DEFAULT '', "
+            "updated_at TEXT NOT NULL DEFAULT '', due_at TEXT NOT NULL DEFAULT '', "
+            "every_days INTEGER NOT NULL DEFAULT 0)"
+        )
+        conn.execute("INSERT INTO tasks (id, title) VALUES ('t1', 'Old task')")
+        conn.commit()
+        conn.close()
+
+        store = TaskStore(db_path=db)
+        old = store.get("t1")
+        assert old.plan == ""
+        assert old.auto_run is False
+
+        created = store.create("New task", plan="steps", auto_run=True)
+        assert created.plan == "steps"
+        assert created.auto_run is True
 
 
 class TestTaskDue:

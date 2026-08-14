@@ -103,6 +103,31 @@ class TestPathConfinement:
         with pytest.raises(ToolError, match="Path traversal"):
             await mw.before(tool_name, {"path": "/etc/passwd"})
 
+    @pytest.mark.parametrize("tool_name", ["copy_file", "file_info", "mkdir"])
+    async def test_new_file_tools_inside_passes(self, tmp_path: Path, tool_name: str) -> None:
+        mw = GuardrailMiddleware(work_dir=tmp_path)
+        args = (
+            {"source": str(tmp_path / "a.txt"), "dest": str(tmp_path / "b.txt")}
+            if tool_name == "copy_file"
+            else {"path": str(tmp_path / "f.txt")}
+        )
+
+        result = await mw.before(tool_name, args)
+
+        assert result == args
+
+    @pytest.mark.parametrize("tool_name", ["copy_file", "file_info", "mkdir"])
+    async def test_new_file_tools_escape_blocked(self, tmp_path: Path, tool_name: str) -> None:
+        mw = GuardrailMiddleware(work_dir=tmp_path)
+        args = (
+            {"source": str(tmp_path / "a.txt"), "dest": "/tmp/evil.txt"}
+            if tool_name == "copy_file"
+            else {"path": "/etc/passwd"}
+        )
+
+        with pytest.raises(ToolError, match="Path traversal"):
+            await mw.before(tool_name, args)
+
 
 # --- shell deny-prefixes ----------------------------------------------------
 class TestShellDenyPrefixes:

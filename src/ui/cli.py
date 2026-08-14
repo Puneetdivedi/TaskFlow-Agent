@@ -17,6 +17,7 @@ from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 
+from src.agent.automation import AutomationRunner
 from src.agent.orchestrator import AgentOrchestrator
 from src.interfaces import IFactStore, IMemory, ISessionStore, ITaskStore, format_facts
 from src.interfaces.task_store import Task
@@ -35,10 +36,11 @@ BANNER = """
 SESSION_USAGE = "Usage: /session <new|save|load|delete> [name]"
 
 TASK_USAGE = (
-    "Usage: /task <create <title> | list [status] | get <id> | "
+    "Usage: /task <create <title> | list [status] | get <id> | run <id> | "
     "update <id> <field=value> ... | complete <id> | delete <id>>\n"
     "update fields: title, description, status, priority, "
-    "due_at (ISO-8601, e.g. 2026-08-10), every_days (0 = not recurring)"
+    "due_at (ISO-8601, e.g. 2026-08-10), every_days (0 = not recurring), "
+    "plan (<multi-step instructions>), auto_run (true/false)"
 )
 
 MEMORY_USAGE = "Usage: /remember <fact>\n       /recall [query]\n       /forget <id>"
@@ -216,6 +218,10 @@ def format_task(task: Task) -> str:
         lines.append(f"  due: {task.due_at[:10]}")
     if task.every_days:
         lines.append(f"  repeats every {task.every_days} day(s)")
+    if task.auto_run:
+        lines.append("  ⚙  auto-runs when due")
+    if task.plan:
+        lines.append(f"  plan: {task.plan}")
     lines.append(f"  created: {task.created_at[:19]}")
     return "\n".join(lines)
 
@@ -227,9 +233,10 @@ def format_task_list(tasks: list[Task]) -> str:
     lines = [f"{len(tasks)} task(s):"]
     for task in tasks:
         due = f", due: {task.due_at[:10]}" if task.due_at else ""
+        auto = ", auto-run" if task.auto_run else ""
         lines.append(
             f"  [{task.status:<11}] {task.id} {task.title} "
-            f"(priority: {task.priority}, created: {task.created_at[:10]}{due})"
+            f"(priority: {task.priority}, created: {task.created_at[:10]}{due}{auto})"
         )
     return "\n".join(lines)
 
@@ -330,6 +337,8 @@ def handle_task_command(command: str, store: ITaskStore) -> TaskCommandResult:
             "priority",
             "due_at",
             "every_days",
+            "plan",
+            "auto_run",
         }
         if unknown:
             fields = ", ".join(sorted(unknown))
@@ -343,6 +352,17 @@ def handle_task_command(command: str, store: ITaskStore) -> TaskCommandResult:
                     f"Invalid every_days {changes['every_days']!r} — must be "
                     f"a non-negative integer.\n{TASK_USAGE}"
                 )
+        auto_run: bool | None = None
+        if "auto_run" in changes:
+            raw = changes["auto_run"].strip().lower()
+            if raw in ("1", "true", "yes", "on"):
+                auto_run = True
+            elif raw in ("0", "false", "no", "off"):
+                auto_run = False
+            else:
+                return TaskCommandResult(
+                    f"Invalid auto_run {changes['auto_run']!r} — must be true/false.\n{TASK_USAGE}"
+                )
         try:
             task = store.update(
                 task_id,
@@ -352,6 +372,8 @@ def handle_task_command(command: str, store: ITaskStore) -> TaskCommandResult:
                 priority=changes.get("priority"),
                 due_at=changes.get("due_at"),
                 every_days=every_days,
+                plan=changes.get("plan"),
+                auto_run=auto_run,
             )
         except (KeyError, ValueError) as exc:
             return TaskCommandResult(str(exc))
@@ -559,6 +581,7 @@ async def run_cli(
     session_store: ISessionStore,
     task_store: ITaskStore | None = None,
     fact_store: IFactStore | None = None,
+    automation: AutomationRunner | None = None,
     *,
     approvals_enabled: bool = False,
 ) -> None:
@@ -603,9 +626,23 @@ async def run_cli(
 
     while True:
         for task in newly_due_tasks(task_store, reported):
-            console.print(
-                f"[bold yellow]Reminder:[/bold yellow] {task.title} due {task.due_at[:10]}"
-            )
+            if task.auto_run and task.plan and automation is not None:
+                console.print(
+                    f"[bold yellow]Auto-running:[/bold yellow] {task.title} "
+                    f"due {task.due_at[:10]}"
+                )
+                report = await automation.run_plan(task.plan, title=task.title)
+                try:
+                    task_store.advance(task.id)
+                except KeyError:
+                    pass
+                console.print(
+                    Panel(report, title=f"Automated: {task.title}", border_style="green")
+                )
+            else:
+                console.print(
+                    f"[bold yellow]Reminder:[/bold yellow] {task.title} due {task.due_at[:10]}"
+                )
         try:
             user_input = Prompt.ask("[bold cyan]You[/bold cyan]")
         except (EOFError, KeyboardInterrupt):
@@ -678,6 +715,33 @@ async def run_cli(
         if cmd == "/task" or cmd.startswith("/task "):
             if task_store is None:
                 console.print("[yellow]Tasks are not available in this build.[/yellow]")
+                continue
+            sub = user_input[len("/task") :].strip().split()
+            if sub and sub[0].lower() == "run":
+                if automation is None:
+                    console.print("[yellow]Automation is not available in this build.[/yellow]")
+                    continue
+                if len(sub) < 2:
+                    console.print(TASK_USAGE)
+                    continue
+                try:
+                    task = task_store.get(sub[1])
+                except KeyError as exc:
+                    console.print(str(exc))
+                    continue
+                if not task.plan:
+                    console.print(
+                        f"[yellow]Task {task.id} has no plan — set one with "
+                        f"/task update {task.id} plan=<steps>[/yellow]"
+                    )
+                    continue
+                console.print(f"[bold]Running plan for {task.id}: {task.title}…[/bold]")
+                report = await automation.run_plan(task.plan, title=task.title)
+                try:
+                    task_store.advance(task.id)
+                except KeyError:
+                    pass
+                console.print(Panel(report, title=f"Automated: {task.title}", border_style="green"))
                 continue
             task_result = handle_task_command(user_input[len("/task") :], task_store)
             console.print(task_result.message)
@@ -770,6 +834,7 @@ def main() -> None:
             app.session_store,
             app.task_store,
             app.fact_store,
+            app.automation,
             approvals_enabled=settings.tool_approvals_enabled,
         )
     )

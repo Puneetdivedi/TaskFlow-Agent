@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from config.settings import Settings
+from src.agent.automation import AutomationRunner
 from src.agent.claude_client import ClaudeClient
 from src.agent.orchestrator import AgentOrchestrator
 from src.di.container import DIContainer
@@ -246,3 +247,31 @@ class TestMemoryWiring:
         )
         app = create_production_app(settings=settings)
         assert app.orchestrator._memory_inject_facts == 3
+
+
+class TestAutomationWiring:
+    def test_registry_includes_automation_run_tool(self, test_settings: Settings) -> None:
+        container = DIContainer()
+        register_defaults(container, test_settings)
+
+        registry: ToolRegistry = container.resolve(IToolRegistry)
+        assert "automation_run" in registry.tool_names
+
+    def test_app_returns_automation_runner(self, test_settings: Settings) -> None:
+        app = create_production_app(settings=test_settings)
+        assert isinstance(app.automation, AutomationRunner)
+
+    def test_safe_default_keeps_destructive_denied(self, test_settings: Settings) -> None:
+        app = create_production_app(settings=test_settings)
+        assert app.automation._allow_destructive is False
+
+    def test_full_autonomy_sets_allow_destructive(self, tmp_path: Path) -> None:
+        settings = Settings(
+            anthropic_api_key="test-key",
+            work_dir=tmp_path,
+            memory_dir=tmp_path / "memory",
+            db_path=tmp_path / "taskflow.db",
+            autonomous_approval="full",
+        )
+        app = create_production_app(settings=settings)
+        assert app.automation._allow_destructive is True

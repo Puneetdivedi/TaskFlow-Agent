@@ -23,11 +23,12 @@ class TaskTool(Tool):
     def description(self) -> str:
         return (
             "Manage a persistent task list. Actions: 'create' a task (title, plus optional "
-            "description, priority, due_at, and every_days recurrence), 'list' tasks "
-            "(optionally filtered by status), 'get' one task's details, 'update' a task's "
-            "title/description/status/priority/due_at/every_days, 'complete' a task "
-            "(recurring tasks roll their due date forward), 'due' list tasks due now or "
-            "within ahead_days, or 'delete' a task."
+            "description, priority, due_at, every_days recurrence, plan, and auto_run), "
+            "'list' tasks (optionally filtered by status), 'get' one task's details, "
+            "'update' a task's title/description/status/priority/due_at/every_days/plan/"
+            "auto_run, 'complete' a task (recurring tasks roll their due date forward), "
+            "'due' list tasks due now or within ahead_days, or 'delete' a task. A task "
+            "with a 'plan' can be executed autonomously with the automation_run tool."
         )
 
     @property
@@ -68,6 +69,20 @@ class TaskTool(Tool):
                     "minimum": 0,
                     "description": "Recurrence interval in days (0 = not recurring)",
                 },
+                "plan": {
+                    "type": "string",
+                    "description": (
+                        "Multi-step instructions for autonomous execution — plain text, "
+                        "one step per line. Empty string clears it."
+                    ),
+                },
+                "auto_run": {
+                    "type": "boolean",
+                    "description": (
+                        "Run the task's plan autonomously when it comes due (requires "
+                        "a non-empty 'plan')."
+                    ),
+                },
                 "ahead_days": {
                     "type": "integer",
                     "minimum": 0,
@@ -88,6 +103,8 @@ class TaskTool(Tool):
                     kwargs.get("priority", "medium"),
                     kwargs.get("due_at", ""),
                     kwargs.get("every_days", 0),
+                    kwargs.get("plan", ""),
+                    bool(kwargs.get("auto_run", False)),
                 )
             except ValueError as exc:
                 raise ToolError(str(exc)) from exc
@@ -134,6 +151,7 @@ class TaskTool(Tool):
         return self._format_task(task)
 
     def _update(self, task_id: str, changes: dict[str, Any]) -> str:
+        auto_run = changes.get("auto_run")
         try:
             task = self._store.update(
                 task_id,
@@ -143,6 +161,8 @@ class TaskTool(Tool):
                 priority=changes.get("priority"),
                 due_at=changes.get("due_at"),
                 every_days=changes.get("every_days"),
+                plan=changes.get("plan"),
+                auto_run=None if auto_run is None else bool(auto_run),
             )
         except (KeyError, ValueError) as exc:
             raise ToolError(str(exc)) from exc
@@ -177,6 +197,10 @@ class TaskTool(Tool):
             lines.append(f"  due: {task.due_at[:10]}")
         if task.every_days:
             lines.append(f"  repeats every {task.every_days} day(s)")
+        if task.auto_run:
+            lines.append("  ⚙  auto-runs when due")
+        if task.plan:
+            lines.append(f"  plan: {task.plan}")
         lines.append(f"  created: {task.created_at[:19]}")
         return "\n".join(lines)
 
@@ -187,8 +211,9 @@ class TaskTool(Tool):
         lines = [f"{len(tasks)} task(s):"]
         for task in tasks:
             due = f", due: {task.due_at[:10]}" if task.due_at else ""
+            auto = ", auto-run" if task.auto_run else ""
             lines.append(
                 f"  [{task.status:<11}] {task.id} {task.title} "
-                f"(priority: {task.priority}, created: {task.created_at[:10]}{due})"
+                f"(priority: {task.priority}, created: {task.created_at[:10]}{due}{auto})"
             )
         return "\n".join(lines)
