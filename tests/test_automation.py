@@ -76,7 +76,16 @@ class TestAutomationRunner:
 
         report = await runner.run_plan("create a file")
 
-        assert report == "Done everything."
+        # Should return a formatted report with status, timing, plan, and result
+        assert "Automation Report: Automation Run" in report
+        assert "**Status:** ✅ SUCCESS" in report
+        assert "**Started:**" in report
+        assert "**Completed:**" in report
+        assert "**Duration:**" in report
+        assert "## Plan" in report
+        assert "create a file" in report
+        assert "## Result" in report
+        assert "Done everything." in report
         # fresh, isolated context seeded with the plan as the only user message
         assert llm.sent_messages[0] == [{"role": "user", "content": "create a file"}]
 
@@ -100,7 +109,10 @@ class TestAutomationRunner:
 
         report = await runner.run_plan("write a file")
 
-        assert report == "file written"
+        assert "Automation Report: Automation Run" in report
+        assert "**Status:** ✅ SUCCESS" in report
+        assert "## Result" in report
+        assert "file written" in report
         assert registry.dispatched == [("write_file", {"path": "a.txt", "content": "x"})]
 
     async def test_destructive_call_denied_by_safe_policy(self) -> None:

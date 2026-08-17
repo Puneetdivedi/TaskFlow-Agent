@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from src.interfaces.task_store import TASK_PRIORITIES, TASK_STATUSES, Task
+from src.interfaces.task_store import TASK_PRIORITIES, TASK_STATUSES, Task, TaskListOptions
 from src.memory.sqlite_store import TASKS_SCHEMA, SQLiteStore
 
 logger = logging.getLogger(__name__)
@@ -251,6 +251,67 @@ class TaskStore(SQLiteStore):
                 rows = conn.execute(
                     "SELECT " + ", ".join(_TASK_COLUMNS) + " FROM tasks ORDER BY created_at DESC"
                 ).fetchall()
+        return [_row_to_task(row) for row in rows]
+
+    def search(self, options: TaskListOptions) -> list[Task]:
+        """Search and filter tasks with advanced options.
+
+        Returns tasks matching the given criteria, sorted and paginated.
+        """
+        # Validate sort_by field
+        valid_sort_fields = {"created_at", "updated_at", "due_at", "priority", "title"}
+        if options.sort_by not in valid_sort_fields:
+            raise ValueError(f"Invalid sort_by: {options.sort_by}. Must be one of {valid_sort_fields}")
+
+        if options.status is not None:
+            self._validate_status(options.status)
+        if options.priority is not None:
+            self._validate_priority(options.priority)
+        if options.due_before is not None:
+            self._validate_due_at(options.due_before)
+        if options.due_after is not None:
+            self._validate_due_at(options.due_after)
+
+        # Build WHERE clause
+        where_conditions = []
+        params = []
+
+        if options.status is not None:
+            where_conditions.append("status = ?")
+            params.append(options.status)
+        if options.priority is not None:
+            where_conditions.append("priority = ?")
+            params.append(options.priority)
+        if options.due_before is not None:
+            where_conditions.append("due_at != '' AND due_at <= ?")
+            params.append(options.due_before)
+        if options.due_after is not None:
+            where_conditions.append("due_at != '' AND due_at >= ?")
+            params.append(options.due_after)
+        if options.search is not None:
+            search_term = f"%{options.search}%"
+            where_conditions.append("(title LIKE ? OR description LIKE ?)")
+            params.extend([search_term, search_term])
+
+        where_clause = ""
+        if where_conditions:
+            where_clause = "WHERE " + " AND ".join(where_conditions)
+
+        # Build ORDER BY clause
+        sort_order = "DESC" if options.sort_desc else "ASC"
+        order_by = f"ORDER BY {options.sort_by} {sort_order}"
+
+        # Build LIMIT/OFFSET clause
+        limit_clause = ""
+        if options.limit is not None:
+            limit_clause = f"LIMIT {options.limit}"
+        if options.offset > 0:
+            limit_clause += f" OFFSET {options.offset}"
+
+        query = f"SELECT {', '.join(_TASK_COLUMNS)} FROM tasks {where_clause} {order_by} {limit_clause}"
+
+        with self._connect() as conn:
+            rows = conn.execute(query, params).fetchall()
         return [_row_to_task(row) for row in rows]
 
     def update(

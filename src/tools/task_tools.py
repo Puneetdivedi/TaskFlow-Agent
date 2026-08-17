@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from src.interfaces.task_store import TASK_PRIORITIES, TASK_STATUSES, ITaskStore, Task
+from src.interfaces.task_store import TASK_PRIORITIES, TASK_STATUSES, ITaskStore, Task, TaskListOptions
 from src.tools.base import Tool, ToolError
 
 
@@ -24,7 +24,9 @@ class TaskTool(Tool):
         return (
             "Manage a persistent task list. Actions: 'create' a task (title, plus optional "
             "description, priority, due_at, every_days recurrence, plan, and auto_run), "
-            "'list' tasks (optionally filtered by status), 'get' one task's details, "
+            "'list' tasks (optionally filtered by status, priority, due date range), "
+            "'search' tasks with advanced filters (keyword, status, priority, due_before, "
+            "due_after, sort, pagination), 'get' one task's details, "
             "'update' a task's title/description/status/priority/due_at/every_days/plan/"
             "auto_run, 'complete' a task (recurring tasks roll their due date forward), "
             "'due' list tasks due now or within ahead_days, or 'delete' a task. A task "
@@ -38,7 +40,7 @@ class TaskTool(Tool):
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["create", "list", "get", "update", "complete", "due", "delete"],
+                    "enum": ["create", "list", "get", "update", "complete", "due", "delete", "search"],
                     "description": "What to do with the task list",
                 },
                 "task_id": {
@@ -88,6 +90,37 @@ class TaskTool(Tool):
                     "minimum": 0,
                     "description": "Horizon in days for the 'due' action (default: 0)",
                 },
+                "due_before": {
+                    "type": "string",
+                    "description": "ISO-8601 date/time - filter tasks due at or before this (search action)",
+                },
+                "due_after": {
+                    "type": "string",
+                    "description": "ISO-8601 date/time - filter tasks due at or after this (search action)",
+                },
+                "search": {
+                    "type": "string",
+                    "description": "Keyword search in title and description (search action)",
+                },
+                "sort_by": {
+                    "type": "string",
+                    "enum": ["created_at", "updated_at", "due_at", "priority", "title"],
+                    "description": "Sort field for search action (default: created_at)",
+                },
+                "sort_desc": {
+                    "type": "boolean",
+                    "description": "Sort descending (newest/soonest first) for search action (default: true)",
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Max results for search action",
+                },
+                "offset": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Pagination offset for search action (default: 0)",
+                },
             },
             "required": ["action"],
         }
@@ -117,6 +150,24 @@ class TaskTool(Tool):
             status = kwargs.get("status")
             try:
                 tasks = await asyncio.to_thread(self._store.list, status)
+            except ValueError as exc:
+                raise ToolError(str(exc)) from exc
+            return self._format_list(tasks)
+
+        if action == "search":
+            try:
+                options = TaskListOptions(
+                    status=kwargs.get("status"),
+                    priority=kwargs.get("priority"),
+                    due_before=kwargs.get("due_before"),
+                    due_after=kwargs.get("due_after"),
+                    search=kwargs.get("search"),
+                    sort_by=kwargs.get("sort_by", "created_at"),
+                    sort_desc=kwargs.get("sort_desc", True),
+                    limit=kwargs.get("limit"),
+                    offset=kwargs.get("offset", 0),
+                )
+                tasks = await asyncio.to_thread(self._store.search, options)
             except ValueError as exc:
                 raise ToolError(str(exc)) from exc
             return self._format_list(tasks)

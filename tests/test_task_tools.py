@@ -94,6 +94,67 @@ class TestTaskToolList:
             await tool.run(action="list", status="bogus")
 
 
+class TestTaskToolSearch:
+    async def test_search_by_keyword(self, tool: TaskTool, task_store: TaskStore) -> None:
+        task_store.create("Buy milk")
+        task_store.create("Buy bread")
+        task_store.create("Walk dog")
+        result = await tool.run(action="search", search="Buy")
+        assert "t1 Buy milk" in result
+        assert "t2 Buy bread" in result
+        assert "Walk dog" not in result
+
+    async def test_search_filters_by_priority(self, tool: TaskTool, task_store: TaskStore) -> None:
+        task_store.create("High priority task", priority="high")
+        task_store.create("Low priority task", priority="low")
+        result = await tool.run(action="search", priority="high")
+        assert "High priority task" in result
+        assert "Low priority task" not in result
+
+    async def test_search_filters_by_due_date_range(
+        self, tool: TaskTool, task_store: TaskStore
+    ) -> None:
+        task_store.create("Early task", due_at="2026-08-01")
+        task_store.create("Late task", due_at="2026-09-01")
+        result = await tool.run(action="search", due_before="2026-08-15")
+        assert "Early task" in result
+        assert "Late task" not in result
+
+    async def test_search_combines_filters(self, tool: TaskTool, task_store: TaskStore) -> None:
+        task_store.create("Report Q1", priority="high")
+        task_store.update("t1", status="done")
+        task_store.create("Report Q2", priority="high")
+        task_store.create("Notes", priority="medium")
+        result = await tool.run(action="search", search="Report", priority="high", status="done")
+        assert "Report Q1" in result
+        assert "Report Q2" not in result
+        assert "Notes" not in result
+
+    async def test_search_pagination(self, tool: TaskTool, task_store: TaskStore) -> None:
+        for i in range(5):
+            task_store.create(f"Task {i}")
+        result = await tool.run(action="search", limit=2)
+        assert "2 task(s):" in result
+        result_offset = await tool.run(action="search", limit=2, offset=2)
+        assert "2 task(s):" in result_offset
+        assert result_offset != result
+
+    async def test_search_sorts_by_due_at(self, tool: TaskTool, task_store: TaskStore) -> None:
+        task_store.create("Later", due_at="2026-09-01")
+        task_store.create("Sooner", due_at="2026-08-01")
+        result = await tool.run(action="search", sort_by="due_at", sort_desc=False)
+        soonest_pos = result.index("Sooner")
+        latest_pos = result.index("Later")
+        assert soonest_pos < latest_pos
+
+    async def test_search_empty(self, tool: TaskTool) -> None:
+        assert (await tool.run(action="search", search="nonexistent")) == "No tasks."
+
+    async def test_search_invalid_sort_by_raises(self, tool: TaskTool) -> None:
+        with pytest.raises(ToolError, match="Invalid sort_by"):
+            await tool.run(action="search", sort_by="bogus")
+
+
 class TestTaskToolGet:
     async def test_get_returns_task(self, tool: TaskTool, task_store: TaskStore) -> None:
         task_store.create("Buy milk")

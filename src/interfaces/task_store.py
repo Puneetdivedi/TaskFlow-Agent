@@ -28,6 +28,21 @@ class Task:
     auto_run: bool = False  # run ``plan`` autonomously when the task comes due
 
 
+@dataclass(frozen=True)
+class TaskListOptions:
+    """Options for listing and searching tasks."""
+
+    status: str | None = None
+    priority: str | None = None
+    due_before: str | None = None  # ISO-8601 date/time; tasks due at or before this
+    due_after: str | None = None   # ISO-8601 date/time; tasks due at or after this
+    search: str | None = None      # keyword search in title/description
+    sort_by: str = "created_at"    # created_at, updated_at, due_at, priority, title
+    sort_desc: bool = True         # newest/soonest first when True
+    limit: int | None = None       # max results
+    offset: int = 0                # pagination offset
+
+
 class ITaskStore(Protocol):
     """Interface for a persistent, ordered list of tasks."""
 
@@ -58,6 +73,13 @@ class ITaskStore(Protocol):
 
     def list(self, status: str | None = None) -> list[Task]:
         """Return all tasks (optionally filtered by *status*), newest first."""
+        ...
+
+    def search(self, options: TaskListOptions) -> list[Task]:
+        """Search and filter tasks with advanced options.
+
+        Returns tasks matching the given criteria, sorted and paginated.
+        """
         ...
 
     def update(

@@ -9,6 +9,7 @@ completion in its own isolated, bounded tool loop — the same pattern
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Any
 
 from src.agent.orchestrator import AgentOrchestrator
@@ -75,7 +76,7 @@ class AutomationRunner:
 
     # ------------------------------------------------------------------
     async def run_plan(self, plan: str, title: str = "") -> str:
-        """Execute *plan* and return a report string.
+        """Execute *plan* and return a formatted report string.
 
         Never raises: LLM/tool failures are turned into report text, so the
         caller — the CLI scheduler or the ``automation_run`` tool — always gets
@@ -83,6 +84,7 @@ class AutomationRunner:
         aborted and reported as a failure (the orchestrator rolls its own
         memory back before re-raising).
         """
+        start_time = datetime.now()
         memory = ConversationMemory()
         orchestrator = AgentOrchestrator(
             llm_client=self._client,
@@ -98,13 +100,75 @@ class AutomationRunner:
 
         user_input = plan if not title else f"# {title}\n\n{plan}"
         try:
-            return await orchestrator.run(
+            result = await orchestrator.run(
                 user_input,
                 tool_approver=autonomous_approver(allow_destructive=self._allow_destructive),
             )
+            end_time = datetime.now()
+            duration = (end_time - start_time).total_seconds()
+            return self._format_report(
+                title=title or "Automation Run",
+                start_time=start_time,
+                end_time=end_time,
+                duration_seconds=duration,
+                plan=plan,
+                result=result,
+                success=True,
+            )
         except KeyboardInterrupt:
             logger.warning("Automation run aborted by the user")
-            return "(Automation aborted by the user.)"
+            end_time = datetime.now()
+            duration = (end_time - start_time).total_seconds()
+            return self._format_report(
+                title=title or "Automation Run",
+                start_time=start_time,
+                end_time=end_time,
+                duration_seconds=duration,
+                plan=plan,
+                result="(Automation aborted by the user.)",
+                success=False,
+            )
         except Exception as exc:  # noqa: BLE001 — always degrade to a report string
             logger.warning("Automation run failed: %s", exc)
-            return f"(Automation failed: {exc})"
+            end_time = datetime.now()
+            duration = (end_time - start_time).total_seconds()
+            return self._format_report(
+                title=title or "Automation Run",
+                start_time=start_time,
+                end_time=end_time,
+                duration_seconds=duration,
+                plan=plan,
+                result=f"(Automation failed: {exc})",
+                success=False,
+            )
+
+    def _format_report(
+        self,
+        *,
+        title: str,
+        start_time: datetime,
+        end_time: datetime,
+        duration_seconds: float,
+        plan: str,
+        result: str,
+        success: bool,
+    ) -> str:
+        """Format a structured automation run report."""
+        status = "✅ SUCCESS" if success else "❌ FAILED"
+        lines = [
+            f"# Automation Report: {title}",
+            f"",
+            f"**Status:** {status}",
+            f"**Started:** {start_time.isoformat(timespec='seconds')}",
+            f"**Completed:** {end_time.isoformat(timespec='seconds')}",
+            f"**Duration:** {duration_seconds:.1f}s",
+            f"",
+            f"## Plan",
+            f"```",
+            plan.strip() if plan else "(no plan provided)",
+            f"```",
+            f"",
+            f"## Result",
+            result.strip() if result else "(no output)",
+        ]
+        return "\n".join(lines)
